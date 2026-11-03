@@ -1,5 +1,6 @@
 import type { GameMap, Terrain, Weapon } from './types';
 import type { Scenario, UnitSpec } from './battle';
+import { randInt } from './rng';
 
 export const WEAPONS = {
   slingshot: { name: 'Slingshot', damage: [2, 4], range: 9, optimal: 6, aimMod: 0, critMod: 5, clip: 6 },
@@ -8,11 +9,12 @@ export const WEAPONS = {
   pole: { name: 'Sharpened Pole', damage: [3, 5], range: 2.5, optimal: 1.5, aimMod: 10, critMod: 10, clip: 4 },
 } satisfies Record<string, Weapon>;
 
-function buildMap(
-  width: number,
-  height: number,
-  edit: (set: (x: number, y: number, t: Terrain) => void, rect: (x0: number, y0: number, x1: number, y1: number, t: Terrain) => void) => void,
-): GameMap {
+type Edit = (
+  set: (x: number, y: number, t: Terrain) => void,
+  rect: (x0: number, y0: number, x1: number, y1: number, t: Terrain) => void,
+) => void;
+
+function buildMap(width: number, height: number, edit: Edit): GameMap {
   const tiles: Terrain[][] = Array.from({ length: height }, () => Array<Terrain>(width).fill('floor'));
   const set = (x: number, y: number, t: Terrain): void => {
     if (x >= 0 && y >= 0 && x < width && y < height) tiles[y][x] = t;
@@ -23,6 +25,25 @@ function buildMap(
   edit(set, rect);
   return { width, height, tiles };
 }
+
+// ---------- squad / rivals ----------
+
+const SQUAD_TEMPLATE = [
+  { id: 'p1', name: 'Mia', role: 'Scout', hp: 10, mobility: 6, aim: 72, defense: 10, crit: 10, weapon: WEAPONS.slingshot },
+  { id: 'p2', name: 'Jonah', role: 'Jock', hp: 14, mobility: 5, aim: 62, defense: 0, crit: 5, weapon: WEAPONS.javelin },
+  { id: 'p3', name: 'Priya', role: 'Nerd', hp: 9, mobility: 5, aim: 75, defense: 0, crit: 5, weapon: WEAPONS.flareGun },
+  { id: 'p4', name: 'Sam', role: 'Drama kid', hp: 11, mobility: 5, aim: 66, defense: 5, crit: 10, weapon: WEAPONS.slingshot },
+];
+
+function squadAt(positions: Array<[number, number]>): UnitSpec[] {
+  return SQUAD_TEMPLATE.map((t, i) => ({ ...t, team: 'player' as const, x: positions[i][0], y: positions[i][1] }));
+}
+
+function foe(id: string, name: string, x: number, y: number, pod: string, weapon: Weapon, hp = 10, aim = 60): UnitSpec {
+  return { id, name, team: 'enemy', role: 'Varsity', x, y, hp, mobility: 5, aim, defense: 0, crit: 5, weapon, pod };
+}
+
+// ---------- Beach Landing (24x16) ----------
 
 function beachMap(): GameMap {
   return buildMap(24, 16, (set, rect) => {
@@ -43,26 +64,74 @@ function beachMap(): GameMap {
   });
 }
 
-const squad: UnitSpec[] = [
-  { id: 'p1', name: 'Mia', team: 'player', role: 'Scout', x: 2, y: 11, hp: 10, mobility: 6, aim: 72, defense: 10, crit: 10, weapon: WEAPONS.slingshot },
-  { id: 'p2', name: 'Jonah', team: 'player', role: 'Jock', x: 3, y: 13, hp: 14, mobility: 5, aim: 62, defense: 0, crit: 5, weapon: WEAPONS.javelin },
-  { id: 'p3', name: 'Priya', team: 'player', role: 'Nerd', x: 3, y: 9, hp: 9, mobility: 5, aim: 75, defense: 0, crit: 5, weapon: WEAPONS.flareGun },
-  { id: 'p4', name: 'Sam', team: 'player', role: 'Drama kid', x: 2, y: 7, hp: 11, mobility: 5, aim: 66, defense: 5, crit: 10, weapon: WEAPONS.slingshot },
-];
-
-const rivals: UnitSpec[] = [
-  { id: 'e1', name: 'Brock', team: 'enemy', role: 'Varsity', x: 19, y: 4, hp: 10, mobility: 5, aim: 60, defense: 0, crit: 5, weapon: WEAPONS.javelin },
-  { id: 'e2', name: 'Tyler', team: 'enemy', role: 'Varsity', x: 20, y: 7, hp: 9, mobility: 5, aim: 62, defense: 0, crit: 5, weapon: WEAPONS.slingshot },
-  { id: 'e3', name: 'Dane', team: 'enemy', role: 'Varsity', x: 17, y: 8, hp: 10, mobility: 5, aim: 58, defense: 0, crit: 5, weapon: WEAPONS.pole },
-  { id: 'e4', name: 'Cole', team: 'enemy', role: 'Varsity', x: 20, y: 11, hp: 9, mobility: 5, aim: 62, defense: 0, crit: 5, weapon: WEAPONS.slingshot },
-  { id: 'e5', name: 'Reid', team: 'enemy', role: 'Varsity', x: 17, y: 13, hp: 10, mobility: 5, aim: 60, defense: 0, crit: 5, weapon: WEAPONS.javelin },
-];
-
 export const beachLanding: Scenario = {
   name: 'Beach Landing',
   seed: 20261103,
   map: beachMap,
-  units: [...squad, ...rivals],
+  units: [
+    ...squadAt([[2, 11], [3, 13], [3, 9], [2, 7]]),
+    // Pod A: three Varsity guarding the north end of the beach
+    foe('e1', 'Brock', 19, 4, 'A', WEAPONS.javelin),
+    foe('e2', 'Tyler', 20, 5, 'A', WEAPONS.slingshot, 9, 62),
+    foe('e3', 'Dane', 19, 6, 'A', WEAPONS.pole),
+    // Pod B: two more camped by the south rocks
+    foe('e4', 'Cole', 20, 11, 'B', WEAPONS.slingshot, 9, 62),
+    foe('e5', 'Reid', 19, 12, 'B', WEAPONS.javelin),
+  ],
 };
 
-export const SCENARIOS: Scenario[] = [beachLanding];
+// ---------- Jungle Interior (40x28): big on purpose, to exercise fog of war and the contact hint ----------
+
+/** Open ground kept clear around every spawn so nobody starts inside a rock. [x, y, radius] */
+const JUNGLE_CLEAR: Array<[number, number, number]> = [
+  [3, 22, 3],
+  [32, 6, 2],
+  [34, 18, 2],
+  [21, 12, 2],
+  [11, 6, 2],
+];
+
+function jungleMap(): GameMap {
+  const W = 40;
+  const H = 28;
+  return buildMap(W, H, (set, rect) => {
+    rect(0, 0, W - 1, 1, 'water');
+    rect(0, H - 2, W - 1, H - 1, 'water');
+    rect(W - 2, 0, W - 1, H - 1, 'water');
+
+    const rng = { rngState: 1337 };
+    const ri = (a: number, b: number): number => randInt(rng, a, b);
+    // Dense growth and rock outcrops that block sight
+    for (let i = 0; i < 34; i++) {
+      const cx = ri(4, W - 5);
+      const cy = ri(3, H - 4);
+      rect(cx, cy, cx + ri(1, 3) - 1, cy + ri(1, 3) - 1, 'wall');
+    }
+    for (let i = 0; i < 46; i++) set(ri(2, W - 3), ri(2, H - 3), 'half');
+    for (let i = 0; i < 30; i++) set(ri(2, W - 3), ri(2, H - 3), 'full');
+
+    for (const [x, y, r] of JUNGLE_CLEAR) rect(x - r, y - r, x + r, y + r, 'floor');
+  });
+}
+
+export const jungleInterior: Scenario = {
+  name: 'Jungle Interior',
+  seed: 4242,
+  map: jungleMap,
+  units: [
+    ...squadAt([[2, 21], [3, 22], [4, 21], [3, 20]]),
+    foe('e1', 'Brock', 31, 6, 'A', WEAPONS.javelin),
+    foe('e2', 'Tyler', 33, 6, 'A', WEAPONS.slingshot, 9, 62),
+    foe('e3', 'Dane', 32, 7, 'A', WEAPONS.pole),
+    foe('e4', 'Cole', 34, 18, 'B', WEAPONS.slingshot, 9, 62),
+    foe('e5', 'Reid', 35, 19, 'B', WEAPONS.javelin),
+    foe('e6', 'Chad', 33, 19, 'B', WEAPONS.pole),
+    foe('e7', 'Troy', 21, 12, 'C', WEAPONS.slingshot, 9, 62),
+    foe('e8', 'Wade', 22, 12, 'C', WEAPONS.javelin),
+    foe('e9', 'Kyle', 11, 6, 'D', WEAPONS.slingshot, 9, 62),
+    foe('e10', 'Jace', 12, 6, 'D', WEAPONS.javelin),
+    foe('e11', 'Nate', 11, 7, 'D', WEAPONS.pole),
+  ],
+};
+
+export const SCENARIOS: Scenario[] = [beachLanding, jungleInterior];

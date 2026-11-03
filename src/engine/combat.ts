@@ -84,6 +84,7 @@ export function resolveShot(
   state.log.push({
     team: attacker.team,
     text: `${prefix}${attacker.name} (${attacker.weapon.name}) -> ${target.name}: ${outcome} [${preview.hitChance}%]`,
+    at: [{ ...attacker.pos }, { ...target.pos }],
   });
 
   return {

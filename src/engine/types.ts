@@ -46,6 +46,14 @@ export interface Unit {
   ammo: number;
   overwatch: boolean;
   alive: boolean;
+  /** pod (cluster) this unit belongs to, or null for a lone unit */
+  pod: string | null;
+  /** dormant units stand their ground until their pod is discovered */
+  dormant: boolean;
+  /** has fired this turn (AI uses it to decide whether to fall back to cover) */
+  attacked: boolean;
+  /** consecutive turns the AI has held position (drives impatience) */
+  idleTurns: number;
 }
 
 export type BattleEvent =
@@ -63,12 +71,15 @@ export type BattleEvent =
     }
   | { type: 'overwatch'; unitId: string }
   | { type: 'reload'; unitId: string }
+  | { type: 'reveal'; podId: string; unitIds: string[] }
   | { type: 'turn'; team: Team; turn: number }
   | { type: 'end'; winner: Team };
 
 export interface LogEntry {
   team: Team | 'sys';
   text: string;
+  /** where it happened; enemy entries are only shown to the player if one of these tiles is visible */
+  at?: Pos[];
 }
 
 /** Plain-JSON game state: serialisable for saves, and shared by every layer of the game. */
@@ -81,4 +92,8 @@ export interface GameState {
   rngState: number;
   winner: Team | null;
   log: LogEntry[];
+  /** tiles the player has ever seen: explored[y][x] */
+  explored: boolean[][];
+  /** player turns since a hostile pod was last discovered; drives the direction hint */
+  turnsSinceContact: number;
 }

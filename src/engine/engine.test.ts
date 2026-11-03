@@ -17,33 +17,8 @@ import {
   type GameState,
   type Unit,
 } from './index';
+import { arena, open, unit } from './testutil';
 
-function unit(over: Partial<Unit> & Pick<Unit, 'id' | 'team'>): Unit {
-  return {
-    name: over.id,
-    role: 'test',
-    pos: { x: 0, y: 0 },
-    hp: 10,
-    maxHp: 10,
-    ap: 2,
-    maxAp: 2,
-    mobility: 5,
-    aim: 70,
-    defense: 0,
-    critChance: 0,
-    weapon: { name: 'Test', damage: [3, 3], range: 12, optimal: 12, aimMod: 0, critMod: 0, clip: 6 },
-    ammo: 6,
-    overwatch: false,
-    alive: true,
-    ...over,
-  };
-}
-
-function arena(rows: string[], units: Unit[], seed = 1): GameState {
-  return { name: 'test', map: parseMap(rows), units, active: 'player', turn: 1, rngState: seed, winner: null, log: [] };
-}
-
-const open = (w: number, h: number): string[] => Array.from({ length: h }, () => '.'.repeat(w));
 
 /** Reads the active team through a call so TS doesn't keep a stale narrowed literal type. */
 const activeTeam = (s: GameState): string => s.active;
@@ -256,6 +231,7 @@ describe('enemy AI and determinism', () => {
 
   it('always terminates, hands the turn back, and never overlaps units', () => {
     const s = createBattle(beachLanding);
+    for (const u of s.units) u.dormant = false; // these tests are about awake AI behaviour
     for (let round = 0; round < 6 && !s.winner; round++) {
       s.active = 'enemy';
       for (const u of s.units) if (u.team === 'enemy' && u.alive) u.ap = u.maxAp;
@@ -270,6 +246,7 @@ describe('enemy AI and determinism', () => {
 
   it('advances toward the player when nothing is in reach', () => {
     const s = createBattle(beachLanding);
+    for (const u of s.units) u.dormant = false; // these tests are about awake AI behaviour
     const before = s.units.filter((u) => u.team === 'enemy').map((u) => u.pos.x);
     s.active = 'enemy';
     for (const u of s.units) if (u.team === 'enemy') u.ap = u.maxAp;
@@ -281,6 +258,7 @@ describe('enemy AI and determinism', () => {
   it('is deterministic for a given seed and action sequence', () => {
     const run = (): string => {
       const s = createBattle(beachLanding);
+      for (const u of s.units) u.dormant = false; // these tests are about awake AI behaviour
       for (let round = 0; round < 4 && !s.winner; round++) {
         s.active = 'enemy';
         for (const u of s.units) if (u.team === 'enemy' && u.alive) u.ap = u.maxAp;

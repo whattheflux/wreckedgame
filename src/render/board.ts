@@ -1,5 +1,6 @@
 import type { GameState, Pos, Terrain, Unit } from '../engine/types';
 import type { PathNode } from '../engine/grid';
+import type { Hint } from '../engine/hint';
 import { computeShot, type ShotPreview } from '../engine/combat';
 
 export interface ViewState {
@@ -10,6 +11,10 @@ export interface ViewState {
   preview: ShotPreview | null;
   /** unit under the cursor that the preview refers to */
   previewTargetId: string | null;
+  /** tiles the squad can see right now: visible[y][x]. Enemies outside it are not drawn. */
+  visible: boolean[][] | null;
+  /** direction to the nearest undiscovered pod, once the squad has gone too long without contact */
+  hint: Hint | null;
 }
 
 interface Effect {
@@ -44,6 +49,10 @@ export class BoardRenderer {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2D canvas not available');
     this.ctx = ctx;
+  }
+
+  addTextEffect(at: Pos, text: string, color: string, ttl = 1500): void {
+    this.effects.push({ kind: 'text', at, text, color, born: performance.now(), ttl });
   }
 
   addShotEffect(from: Pos, to: Pos, hit: boolean, text: string, crit: boolean): void {
@@ -100,11 +109,13 @@ export class BoardRenderer {
     ctx.fillRect(0, 0, w, h);
 
     this.drawTerrain(state);
+    this.drawFog(state, view);
     this.drawOverlays(state, view);
     this.drawShotLine(state, view);
-    for (const u of state.units) if (u.alive) this.drawUnit(u, state, view);
+    for (const u of state.units) if (u.alive && this.canSee(u, view)) this.drawUnit(u, state, view);
     this.drawPreviewLabel(state, view);
     this.drawEffects();
+    this.drawHint(state, view);
 
     ctx.strokeStyle = 'rgba(255,255,255,0.04)';
     ctx.lineWidth = 1;
@@ -147,6 +158,77 @@ export class BoardRenderer {
     }
   }
 
+  /** Your own units are always drawn; enemies only while one of your units has them in sight. */
+  private canSee(u: Unit, view: ViewState): boolean {
+    if (u.team === 'player' || !view.visible) return true;
+    return view.visible[u.pos.y]?.[u.pos.x] ?? false;
+  }
+
+  /** Never-seen tiles are black; seen-but-not-currently-visible tiles are dimmed. */
+  private drawFog(state: GameState, view: ViewState): void {
+    const { ctx, tile } = this;
+    for (let y = 0; y < state.map.height; y++) {
+      for (let x = 0; x < state.map.width; x++) {
+        const o = this.px({ x, y });
+        if (!state.explored[y][x]) {
+          ctx.fillStyle = '#05080b';
+          ctx.fillRect(o.x, o.y, tile, tile);
+        } else if (view.visible && !view.visible[y][x]) {
+          ctx.fillStyle = 'rgba(5,8,12,0.55)';
+          ctx.fillRect(o.x, o.y, tile, tile);
+        }
+      }
+    }
+  }
+
+  /** Pulsing arrow on the edge of the map pointing toward the nearest undiscovered group. */
+  private drawHint(state: GameState, view: ViewState): void {
+    const h = view.hint;
+    if (!h) return;
+    const { ctx, tile } = this;
+    const bw = state.map.width * tile;
+    const bh = state.map.height * tile;
+    const cx = this.ox + bw / 2;
+    const cy = this.oy + bh / 2;
+    const dx = Math.cos(h.angle);
+    const dy = Math.sin(h.angle);
+    const margin = 34;
+    const tx = Math.abs(dx) > 1e-6 ? (bw / 2 - margin) / Math.abs(dx) : Infinity;
+    const ty = Math.abs(dy) > 1e-6 ? (bh / 2 - margin) / Math.abs(dy) : Infinity;
+    const t = Math.min(tx, ty);
+    const px = cx + dx * t;
+    const py = cy + dy * t;
+
+    ctx.save();
+    ctx.globalAlpha = 0.65 + 0.35 * Math.sin(performance.now() / 350);
+    ctx.translate(px, py);
+    ctx.rotate(h.angle);
+    ctx.fillStyle = '#e8b04a';
+    ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(20, 0);
+    ctx.lineTo(-11, -14);
+    ctx.lineTo(-4, 0);
+    ctx.lineTo(-11, 14);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    const label = `HOSTILES ~${h.distance}`;
+    ctx.font = 'bold 12px system-ui, sans-serif';
+    const lw = ctx.measureText(label).width + 14;
+    const lx = px - dx * 52;
+    const ly = py - dy * 52;
+    ctx.fillStyle = 'rgba(10,16,22,0.9)';
+    ctx.fillRect(lx - lw / 2, ly - 11, lw, 22);
+    ctx.fillStyle = '#e8b04a';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, lx, ly);
+  }
+
   private selected(state: GameState, view: ViewState): Unit | undefined {
     return view.selectedId ? state.units.find((u) => u.id === view.selectedId && u.alive) : undefined;
   }
@@ -167,7 +249,7 @@ export class BoardRenderer {
 
     if (view.mode === 'shoot') {
       for (const e of state.units) {
-        if (!e.alive || e.team === sel.team) continue;
+        if (!e.alive || e.team === sel.team || !this.canSee(e, view)) continue;
         const pv = computeShot(state.map, sel, sel.pos, e);
         if (!pv.canShoot) continue;
         const c = this.center(e.pos);

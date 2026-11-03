@@ -4,6 +4,7 @@ import {
   createBattle,
   endTurn,
   enemyStep,
+  getHint,
   getUnit,
   living,
   moveUnit,
@@ -13,6 +14,7 @@ import {
   setOverwatch,
   shoot,
   unitAt,
+  visibleTiles,
   type ActionResult,
   type BattleEvent,
   type GameState,
@@ -27,10 +29,30 @@ const actions = document.getElementById('actions') as HTMLDivElement;
 const logEl = document.getElementById('log') as HTMLDivElement;
 const renderer = new BoardRenderer(canvas);
 
-let state: GameState = createBattle(SCENARIOS[0]);
+let scenarioIndex = 0;
+let state: GameState = createBattle(SCENARIOS[scenarioIndex]);
 let busy = false;
 let logIndex = 0;
-const view: ViewState = { selectedId: null, mode: 'move', hover: null, reach: null, preview: null, previewTargetId: null };
+const view: ViewState = {
+  selectedId: null,
+  mode: 'move',
+  hover: null,
+  reach: null,
+  preview: null,
+  previewTargetId: null,
+  visible: null,
+  hint: null,
+};
+
+/** True if one of your units currently has this tile in sight. */
+const seen = (p: Pos): boolean => view.visible?.[p.y]?.[p.x] ?? false;
+
+/** An enemy you can't currently see doesn't exist as far as clicking and hovering go. */
+function visibleUnitAt(x: number, y: number): Unit | undefined {
+  const u = unitAt(state, x, y);
+  if (!u) return undefined;
+  return u.team === 'player' || seen(u.pos) ? u : undefined;
+}
 
 // ---------- helpers ----------
 
@@ -52,6 +74,8 @@ function toast(text: string): void {
 function flushLog(): void {
   for (; logIndex < state.log.length; logIndex++) {
     const e = state.log[logIndex];
+    // Enemy activity out in the fog stays out of the log.
+    if (e.team === 'enemy' && e.at && !e.at.some(seen)) continue;
     const d = document.createElement('div');
     d.className = e.team === 'sys' ? 'sys' : e.team;
     d.textContent = e.text;
@@ -61,11 +85,19 @@ function flushLog(): void {
 }
 
 function playEffects(events: BattleEvent[]): void {
+  // Visibility is refreshed first so a pod that just woke is already drawn when its flash appears.
+  view.visible = visibleTiles(state);
   for (const ev of events) {
+    if (ev.type === 'reveal') {
+      const first = getUnit(state, ev.unitIds[0]);
+      if (first) renderer.addTextEffect(first.pos, 'CONTACT!', '#ffb347', 1800);
+      continue;
+    }
     if (ev.type !== 'shoot') continue;
     const a = getUnit(state, ev.attackerId);
     const t = getUnit(state, ev.targetId);
     if (!a || !t) continue;
+    if (!seen(a.pos) && !seen(t.pos)) continue; // happened in the fog
     const text = ev.hit ? `${ev.crit ? 'CRIT ' : ''}-${ev.damage}` : 'MISS';
     renderer.addShotEffect(a.pos, t.pos, ev.hit, text, ev.crit);
   }
@@ -91,11 +123,13 @@ function refresh(): void {
   if (view.selectedId && !sel) view.selectedId = null;
 
   view.reach = sel && sel.ap > 0 && canAct() ? reachableFor(state, sel) : null;
+  view.visible = visibleTiles(state);
+  view.hint = getHint(state);
 
   view.preview = null;
   view.previewTargetId = null;
   if (sel && view.hover) {
-    const t = unitAt(state, view.hover.x, view.hover.y);
+    const t = visibleUnitAt(view.hover.x, view.hover.y);
     if (t && t.team !== sel.team) {
       view.preview = computeShot(state.map, sel, sel.pos, t);
       view.previewTargetId = t.id;
@@ -115,6 +149,15 @@ function renderPanel(sel: Unit | undefined): void {
     lines.push(`<div><b>${state.winner === 'player' ? 'VICTORY' : 'DEFEAT'}</b> &mdash; press N to restart</div>`);
   } else {
     lines.push(`<div>${side}${busy ? ' (acting...)' : ''}</div>`);
+  }
+
+  if (view.hint) {
+    const h = view.hint;
+    lines.push(
+      `<div style="margin-top:8px;padding:6px 8px;border-left:3px solid #e8b04a;background:#1a2530;color:#e8b04a">` +
+        `No contact for ${state.turnsSinceContact} turns.<br>` +
+        `Hostile group detected to the <b>${h.direction}</b> &mdash; ${h.band}, roughly ${h.distance} tiles.</div>`,
+    );
   }
 
   if (sel) {
@@ -165,6 +208,7 @@ const buttons: Btn[] = [
   { label: 'Reload (R)', key: 'r', run: () => act(reload(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo < s.weapon.clip },
   { label: 'End turn (E)', key: 'e', run: () => startEnemyPhase(), enabled: () => canAct() },
   { label: 'Restart (N)', key: 'n', run: () => restart(), enabled: () => true },
+  { label: 'Next map (X)', key: 'x', run: () => restart(true), enabled: () => true },
 ];
 
 const buttonEls = buttons.map((b) => {
@@ -219,7 +263,7 @@ function afterPlayerAction(): void {
 
 function onClick(p: Pos): void {
   if (!canAct()) return;
-  const clicked = unitAt(state, p.x, p.y);
+  const clicked = visibleUnitAt(p.x, p.y);
   if (clicked && clicked.team === 'player') {
     select(clicked.id);
     return;
@@ -260,8 +304,9 @@ function startEnemyPhase(): void {
   window.setTimeout(tick, 450);
 }
 
-function restart(): void {
-  state = createBattle(SCENARIOS[0]);
+function restart(nextMap = false): void {
+  if (nextMap) scenarioIndex = (scenarioIndex + 1) % SCENARIOS.length;
+  state = createBattle(SCENARIOS[scenarioIndex]);
   busy = false;
   logIndex = 0;
   logEl.innerHTML = '';
