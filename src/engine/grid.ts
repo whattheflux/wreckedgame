@@ -125,7 +125,12 @@ export interface PathNode {
 }
 
 /** Every tile `self` can reach within maxCost steps (8-way, no corner cutting, units block). Includes the start tile at cost 0. */
-export function reachableTiles(map: GameMap, units: Unit[], self: Unit, maxCost: number): Map<string, PathNode> {
+export function reachableTiles(
+  map: GameMap,
+  units: Array<Pick<Unit, 'id' | 'pos' | 'alive'>>,
+  self: Pick<Unit, 'id' | 'pos'>,
+  maxCost: number,
+): Map<string, PathNode> {
   const occupied = new Set<string>();
   for (const u of units) if (u.alive && u.id !== self.id) occupied.add(posKey(u.pos.x, u.pos.y));
 

@@ -7,3 +7,4 @@ export * from './hint';
 export * from './battle';
 export * from './ai';
 export * from './scenarios';
+export * from './encounter';

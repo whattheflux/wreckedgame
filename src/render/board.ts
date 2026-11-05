@@ -1,4 +1,4 @@
-import type { GameState, Pos, Terrain, Unit } from '../engine/types';
+import type { Biome, GameState, Pos, Terrain, Unit } from '../engine/types';
 import type { PathNode } from '../engine/grid';
 import type { Hint } from '../engine/hint';
 import { computeShot, type ShotPreview } from '../engine/combat';
@@ -35,6 +35,17 @@ const TERRAIN_COLOR: Record<Terrain, string> = {
   full: '#6b6246',
   water: '#15324a',
 };
+
+const BIOME_FLOOR: Record<Biome, string> = {
+  beach: '#7a7150',
+  forest: '#3f5a36',
+  wastes: '#6e5a46',
+  marsh: '#46583f',
+  mountain: '#5a5d63',
+  canyon: '#74523c',
+  volcano: '#4a3330',
+};
+const BIOME_WATER: Partial<Record<Biome, string>> = { marsh: '#1f4a45', volcano: '#7a2a10' };
 
 const TEAM_COLOR = { player: '#3d8fc2', enemy: '#c2503d' } as const;
 
@@ -137,7 +148,14 @@ export class BoardRenderer {
       for (let x = 0; x < state.map.width; x++) {
         const t = state.map.tiles[y][x];
         const o = this.px({ x, y });
-        ctx.fillStyle = TERRAIN_COLOR[t];
+        ctx.fillStyle =
+          t === 'water'
+            ? (state.map.biome && BIOME_WATER[state.map.biome]) || TERRAIN_COLOR.water
+            : t === 'wall'
+              ? TERRAIN_COLOR.wall
+              : state.map.biome
+                ? BIOME_FLOOR[state.map.biome]
+                : TERRAIN_COLOR[t];
         ctx.fillRect(o.x, o.y, tile, tile);
         if (t === 'wall') {
           ctx.fillStyle = '#585e68';

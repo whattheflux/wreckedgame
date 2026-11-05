@@ -1,4 +1,4 @@
-import type { GameMap, Terrain, Weapon } from './types';
+import type { Biome, GameMap, Terrain, Weapon } from './types';
 import type { Scenario, UnitSpec } from './battle';
 import { randInt } from './rng';
 
@@ -14,7 +14,7 @@ type Edit = (
   rect: (x0: number, y0: number, x1: number, y1: number, t: Terrain) => void,
 ) => void;
 
-function buildMap(width: number, height: number, edit: Edit): GameMap {
+export function buildMap(width: number, height: number, edit: Edit, biome?: Biome): GameMap {
   const tiles: Terrain[][] = Array.from({ length: height }, () => Array<Terrain>(width).fill('floor'));
   const set = (x: number, y: number, t: Terrain): void => {
     if (x >= 0 && y >= 0 && x < width && y < height) tiles[y][x] = t;
@@ -23,23 +23,23 @@ function buildMap(width: number, height: number, edit: Edit): GameMap {
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(x, y, t);
   };
   edit(set, rect);
-  return { width, height, tiles };
+  return { width, height, tiles, biome };
 }
 
 // ---------- squad / rivals ----------
 
-const SQUAD_TEMPLATE = [
+export const SQUAD_TEMPLATE = [
   { id: 'p1', name: 'Mia', role: 'Scout', hp: 10, mobility: 6, aim: 72, defense: 10, crit: 10, weapon: WEAPONS.slingshot },
   { id: 'p2', name: 'Jonah', role: 'Jock', hp: 14, mobility: 5, aim: 62, defense: 0, crit: 5, weapon: WEAPONS.javelin },
   { id: 'p3', name: 'Priya', role: 'Nerd', hp: 9, mobility: 5, aim: 75, defense: 0, crit: 5, weapon: WEAPONS.flareGun },
   { id: 'p4', name: 'Sam', role: 'Drama kid', hp: 11, mobility: 5, aim: 66, defense: 5, crit: 10, weapon: WEAPONS.slingshot },
 ];
 
-function squadAt(positions: Array<[number, number]>): UnitSpec[] {
+export function squadAt(positions: Array<[number, number]>): UnitSpec[] {
   return SQUAD_TEMPLATE.map((t, i) => ({ ...t, team: 'player' as const, x: positions[i][0], y: positions[i][1] }));
 }
 
-function foe(id: string, name: string, x: number, y: number, pod: string, weapon: Weapon, hp = 10, aim = 60): UnitSpec {
+export function foe(id: string, name: string, x: number, y: number, pod: string, weapon: Weapon, hp = 10, aim = 60): UnitSpec {
   return { id, name, team: 'enemy', role: 'Varsity', x, y, hp, mobility: 5, aim, defense: 0, crit: 5, weapon, pod };
 }
 
@@ -61,7 +61,7 @@ function beachMap(): GameMap {
     // Crates, rocks and deck chairs
     for (const [x, y] of [[5, 7], [5, 8], [6, 12], [7, 4], [8, 9], [15, 4], [16, 9], [18, 12], [17, 3], [12, 12]] as const) set(x, y, 'half');
     for (const [x, y] of [[7, 7], [8, 12], [14, 7], [15, 11], [18, 6], [19, 9], [9, 3], [12, 13]] as const) set(x, y, 'full');
-  });
+  }, 'beach');
 }
 
 export const beachLanding: Scenario = {
@@ -111,7 +111,7 @@ function jungleMap(): GameMap {
     for (let i = 0; i < 30; i++) set(ri(2, W - 3), ri(2, H - 3), 'full');
 
     for (const [x, y, r] of JUNGLE_CLEAR) rect(x - r, y - r, x + r, y + r, 'floor');
-  });
+  }, 'forest');
 }
 
 export const jungleInterior: Scenario = {

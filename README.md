@@ -11,7 +11,19 @@ npm test         # engine unit tests + full-battle fuzz (vitest)
 npm run build    # typecheck + production build
 ```
 
-## Controls (battle prototype)
+## Controls
+
+### World map (free roam)
+
+| Input | Action |
+| --- | --- |
+| `WASD` / arrows | Walk (slides along the coast) |
+| Click the map | Travel there (A* route; clicking the sea snaps to the shore) |
+| `E` | Enter the site you're standing in (assault a hostile site, or visit camp) |
+| `G` | Debug overlay: walkable area and region circles |
+| `B` / `J` | Sandbox battles on the two hand-built maps |
+
+### Battle
 
 | Input | Action |
 | --- | --- |
@@ -22,7 +34,9 @@ npm run build    # typecheck + production build
 | `O` | Overwatch (uses remaining AP; reaction shot at -15 aim on the first enemy that moves into sight) |
 | `R` | Reload (1 AP) |
 | `E` | End turn |
-| `N` / `X` | Restart / next map |
+| `W` | Retreat to the world map |
+| `Enter` | After the fight: return to the world (rewards on victory, back to camp on defeat) |
+| `N` / `X` | Restart / next map (sandbox battles only) |
 
 ## Combat rules
 
@@ -32,6 +46,20 @@ npm run build    # typecheck + production build
 - Walls block line of sight; cover objects can be shot over. Water is impassable.
 - Hit chance = aim + weapon mod - defense - cover - range falloff (4% per tile past optimal), clamped 5-95.
 - All randomness comes from a seeded PRNG stored on the game state, so battles are deterministic and replayable.
+
+## World map
+
+The painted map in `public/worldmap.png` is the playfield. Everything the code needs to know about it lives in `src/world/worlddata.json` (pixel coordinates in the 962x537 image):
+
+- **coast**: polygon of walkable land. Compiled to a 6px walk grid; the party can't leave it.
+- **regions**: circles/polygons, first match wins. Each has a `biome` (drives the battle map's terrain and colours) and a `danger` 0-4.
+- **sites**: enterable places. A site with a `difficulty` is a hostile garrison you assault once (it then stays cleared) for a scrap reward; the rest are landmarks or camp.
+
+**Random encounters.** Walking outside a danger-0 region accumulates `distance x danger`. Every 900-1800 of that, an ambush starts: a battle on a generated map for the current region's biome. Standing still never triggers one, and camp is safe. Site assaults use the same generator with a seed derived from the site id, so a site is always the same map.
+
+**Generated battles** (`encounterScenario`): 30x18, per-biome clutter profile, squad on the left, pods always placed outside sight range (every fight starts with a search, so the contact hint matters), corridors carved if anything ended up walled off, stats and weapons scaled by difficulty.
+
+Defeat sends the squad back to camp minus a quarter of its scrap. There is no HP persistence between fights yet.
 
 ## Finding the enemy
 
@@ -57,12 +85,17 @@ src/engine/   pure game logic, no DOM/rendering. Plain-JSON state (saveable), fu
   tactics.ts    shared AI maths: expected incoming damage, cover value, nearest unit
   battle.ts     turn/AP state machine: move, shoot, overwatch, reload, pod wake + scamper, end turn
   ai.ts         enemy decision-making, one action per call so the UI can pace it
-  scenarios.ts  weapon table + maps: Beach Landing (24x16), Jungle Interior (40x28)
+  scenarios.ts  weapon table, squad template + hand-built sandbox maps: Beach Landing, Jungle Interior
+  encounter.ts  seeded per-biome battle generator used by world encounters and site assaults
+src/world/    the free-roam layer (also pure logic, no DOM, except render.ts)
+  worlddata.json  coast, regions, sites for the painted map
+  world.ts      walk grid, A* + string-pulling, sliding movement, danger-weighted encounters
+  render.ts     draws the map, sites, party, route
 src/render/   canvas board renderer (terrain, fog, overlays, hint arrow, effects)
-src/main.ts   input, panel, log, enemy-phase pacing
+src/main.ts   mode switch (world <-> battle), input, panels, log, enemy-phase pacing
 ```
 
-The strategic layer (world map, base, research) and the free-roam overworld will sit on top of the same game state and call into the battle engine for encounters.
+The overworld calls into the battle engine for encounters; base and research will sit alongside it.
 
 ## Roadmap
 
@@ -73,6 +106,6 @@ The strategic layer (world map, base, research) and the free-roam overworld will
 5. [ ] Unit model: clique archetypes, classes, traits, injuries, levelling
 6. [ ] Tech tree as data (spears -> metalwork -> chemistry/gunpowder -> crossbows -> steam -> electricity) gating weapons, armour, buildings
 7. [ ] Base view: building placement + resource loop
-8. [ ] World map: faction territories, missions
-9. [ ] Free-roam overworld with random encounters that drop into the battle engine
+8. [x] Free-roam world map (your painted map) with random encounters and assaultable sites
+9. [ ] Faction territories and missions on the world map; persistent squad HP/injuries
 10. [ ] Story layer

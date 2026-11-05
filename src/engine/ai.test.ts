@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   SCENARIOS,
+  encounterScenario,
+  type Biome,
   coverAgainst,
   createBattle,
   dist,
@@ -168,8 +170,12 @@ function playerTurn(s: GameState, rng: { rngState: number }): BattleEvent[] {
   return events;
 }
 
+const GENERATED = (['beach', 'forest', 'wastes', 'marsh', 'mountain', 'canyon', 'volcano'] as Biome[]).map((biome, i) =>
+  encounterScenario({ seed: 100 + i, biome, pods: 2, podSize: 3, difficulty: 1 + (i % 4) }),
+);
+
 describe('fuzz: full battles hold their invariants', () => {
-  for (const sc of SCENARIOS) {
+  for (const sc of [...SCENARIOS, ...GENERATED]) {
     it(`${sc.name}: 25 seeds x 14 rounds, discovery included`, () => {
       let reveals = 0;
       let finished = 0;

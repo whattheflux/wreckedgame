@@ -2,6 +2,7 @@ import {
   SCENARIOS,
   computeShot,
   createBattle,
+  encounterScenario,
   endTurn,
   enemyStep,
   getHint,
@@ -19,15 +20,53 @@ import {
   type BattleEvent,
   type GameState,
   type Pos,
+  type Scenario,
   type Unit,
 } from './engine';
+import { rand } from './engine/rng';
 import { BoardRenderer, type ViewState } from './render/board';
+import { WorldRenderer, type WorldView } from './world/render';
+import {
+  WORLD,
+  createWorld,
+  regionAt,
+  siteById,
+  siteNear,
+  stepWorld,
+  walkTo,
+  type Region,
+  type Site,
+} from './world/world';
 
 const canvas = document.getElementById('board') as HTMLCanvasElement;
+const worldCanvas = document.getElementById('world') as HTMLCanvasElement;
 const panel = document.getElementById('panel') as HTMLDivElement;
 const actions = document.getElementById('actions') as HTMLDivElement;
 const logEl = document.getElementById('log') as HTMLDivElement;
 const renderer = new BoardRenderer(canvas);
+const worldRenderer = new WorldRenderer(worldCanvas);
+
+const params = new URLSearchParams(location.search);
+const worldSeed = Number(params.get('seed')) || Date.now() & 0x7fffffff;
+
+// ---------- top-level game state ----------
+
+type Mode = 'world' | 'battle';
+let mode: Mode = 'world';
+const world = createWorld(worldSeed);
+const worldView: WorldView = { hover: null, debug: false };
+
+/** What the current battle is for, and what happens when it ends. */
+interface BattleCtx {
+  label: string;
+  /** site being assaulted; cleared on victory */
+  site: Site | null;
+  /** scrap awarded on victory */
+  reward: number;
+  /** dev sandbox battle: no consequences, restart/next-map available */
+  sandbox: boolean;
+}
+let battleCtx: BattleCtx | null = null;
 
 let scenarioIndex = 0;
 let state: GameState = createBattle(SCENARIOS[scenarioIndex]);
@@ -61,7 +100,7 @@ const selected = (): Unit | undefined => {
   return u && u.alive ? u : undefined;
 };
 
-const canAct = (): boolean => !busy && !state.winner && state.active === 'player';
+const canAct = (): boolean => mode === 'battle' && !busy && !state.winner && state.active === 'player';
 
 function toast(text: string): void {
   const d = document.createElement('div');
@@ -116,9 +155,61 @@ function selectNext(): void {
   select(ready[(cur + 1) % ready.length].id);
 }
 
-// ---------- refresh: derive all view data from state ----------
+// ---------- buttons (rebuilt per mode) ----------
+
+interface Btn {
+  label: string;
+  key: string;
+  run: () => void;
+  enabled: (s: Unit | undefined) => boolean;
+  active?: () => boolean;
+}
+
+let currentButtons: Btn[] = [];
+let buttonEls: HTMLButtonElement[] = [];
+
+function setButtons(list: Btn[]): void {
+  currentButtons = list;
+  actions.innerHTML = '';
+  buttonEls = list.map((b) => {
+    const el = document.createElement('button');
+    el.textContent = b.label;
+    el.addEventListener('click', b.run);
+    actions.appendChild(el);
+    return el;
+  });
+}
+
+function renderActions(sel: Unit | undefined): void {
+  currentButtons.forEach((b, i) => {
+    buttonEls[i].disabled = !b.enabled(sel);
+    buttonEls[i].classList.toggle('active', b.active?.() ?? false);
+  });
+}
+
+const battleButtons: Btn[] = [
+  { label: 'Move (M)', key: 'm', run: () => setAimMode('move'), enabled: (s) => canAct() && !!s && s.ap > 0, active: () => view.mode === 'move' },
+  { label: 'Fire (F)', key: 'f', run: () => setAimMode('shoot'), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0, active: () => view.mode === 'shoot' },
+  { label: 'Overwatch (O)', key: 'o', run: () => act(setOverwatch(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0 },
+  { label: 'Reload (R)', key: 'r', run: () => act(reload(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo < s.weapon.clip },
+  { label: 'End turn (E)', key: 'e', run: () => startEnemyPhase(), enabled: () => canAct() },
+  { label: 'Continue (Enter)', key: 'enter', run: () => finishBattle(), enabled: () => !!state.winner && !busy && !battleCtx?.sandbox },
+  { label: 'Retreat (W)', key: 'w', run: () => retreat(), enabled: () => !busy && (!state.winner || !!battleCtx?.sandbox) },
+  { label: 'Restart (N)', key: 'n', run: () => restart(), enabled: () => !!battleCtx?.sandbox },
+  { label: 'Next map (X)', key: 'x', run: () => restart(true), enabled: () => !!battleCtx?.sandbox },
+];
+
+const worldButtons: Btn[] = [
+  { label: 'Enter site (E)', key: 'e', run: () => enterSite(siteNear(world.pos)), enabled: () => !!siteNear(world.pos) },
+  { label: 'Debug overlay (G)', key: 'g', run: () => (worldView.debug = !worldView.debug), enabled: () => true, active: () => worldView.debug },
+  { label: 'Sandbox: Beach (B)', key: 'b', run: () => startSandbox(0), enabled: () => true },
+  { label: 'Sandbox: Jungle (J)', key: 'j', run: () => startSandbox(1), enabled: () => true },
+];
+
+// ---------- battle refresh: derive all view data from state ----------
 
 function refresh(): void {
+  if (mode !== 'battle') return;
   const sel = selected();
   if (view.selectedId && !sel) view.selectedId = null;
 
@@ -146,7 +237,9 @@ function renderPanel(sel: Unit | undefined): void {
   const side = state.active === 'player' ? 'Your squad' : 'Rival faction';
   lines.push(`<h2>${state.name} &mdash; Turn ${state.turn}</h2>`);
   if (state.winner) {
-    lines.push(`<div><b>${state.winner === 'player' ? 'VICTORY' : 'DEFEAT'}</b> &mdash; press N to restart</div>`);
+    const verdict = state.winner === 'player' ? 'VICTORY' : 'DEFEAT';
+    const next = battleCtx?.sandbox ? 'press N to restart' : 'press Enter to return to the map';
+    lines.push(`<div><b>${verdict}</b> &mdash; ${next}</div>`);
   } else {
     lines.push(`<div>${side}${busy ? ' (acting...)' : ''}</div>`);
   }
@@ -188,45 +281,12 @@ function renderPanel(sel: Unit | undefined): void {
 
   lines.push(
     `<div style="margin-top:10px;opacity:.55;font-size:11px">Click tile: move &middot; click enemy: shoot<br>` +
-      `M move &middot; F fire &middot; O overwatch &middot; R reload &middot; E end turn &middot; Tab next</div>`,
+      `M move &middot; F fire &middot; O overwatch &middot; R reload &middot; E end turn &middot; Tab next &middot; W retreat</div>`,
   );
   panel.innerHTML = lines.join('');
 }
 
-interface Btn {
-  label: string;
-  key: string;
-  run: () => void;
-  enabled: (s: Unit | undefined) => boolean;
-  active?: () => boolean;
-}
-
-const buttons: Btn[] = [
-  { label: 'Move (M)', key: 'm', run: () => setMode('move'), enabled: (s) => canAct() && !!s && s.ap > 0, active: () => view.mode === 'move' },
-  { label: 'Fire (F)', key: 'f', run: () => setMode('shoot'), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0, active: () => view.mode === 'shoot' },
-  { label: 'Overwatch (O)', key: 'o', run: () => act(setOverwatch(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0 },
-  { label: 'Reload (R)', key: 'r', run: () => act(reload(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo < s.weapon.clip },
-  { label: 'End turn (E)', key: 'e', run: () => startEnemyPhase(), enabled: () => canAct() },
-  { label: 'Restart (N)', key: 'n', run: () => restart(), enabled: () => true },
-  { label: 'Next map (X)', key: 'x', run: () => restart(true), enabled: () => true },
-];
-
-const buttonEls = buttons.map((b) => {
-  const el = document.createElement('button');
-  el.textContent = b.label;
-  el.addEventListener('click', b.run);
-  actions.appendChild(el);
-  return el;
-});
-
-function renderActions(sel: Unit | undefined): void {
-  buttons.forEach((b, i) => {
-    buttonEls[i].disabled = !b.enabled(sel);
-    buttonEls[i].classList.toggle('active', b.active?.() ?? false);
-  });
-}
-
-function setMode(m: 'move' | 'shoot'): void {
+function setAimMode(m: 'move' | 'shoot'): void {
   view.mode = m;
   refresh();
 }
@@ -287,6 +347,7 @@ function startEnemyPhase(): void {
   refresh();
 
   const tick = (): void => {
+    if (mode !== 'battle') return; // left mid-phase (e.g. debug hook)
     const ev = enemyStep(state);
     if (ev === null) {
       busy = false;
@@ -306,19 +367,209 @@ function startEnemyPhase(): void {
 
 function restart(nextMap = false): void {
   if (nextMap) scenarioIndex = (scenarioIndex + 1) % SCENARIOS.length;
-  state = createBattle(SCENARIOS[scenarioIndex]);
+  beginBattle(SCENARIOS[scenarioIndex], battleCtx ?? { label: SCENARIOS[scenarioIndex].name, site: null, reward: 0, sandbox: true });
+}
+
+// ---------- mode switching: world <-> battle ----------
+
+function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
+  mode = 'battle';
+  battleCtx = ctx;
+  state = createBattle(scenario);
   busy = false;
   logIndex = 0;
   logEl.innerHTML = '';
+  canvas.hidden = false;
+  worldCanvas.hidden = true;
+  heldKeys.clear();
   view.selectedId = null;
   view.mode = 'move';
   view.hover = null;
+  setButtons(battleButtons);
   const first = living(state, 'player')[0];
   if (first) view.selectedId = first.id;
+  toast(ctx.label);
   refresh();
 }
 
+function startSandbox(i: number): void {
+  scenarioIndex = i;
+  beginBattle(SCENARIOS[i], { label: `Sandbox: ${SCENARIOS[i].name}`, site: null, reward: 0, sandbox: true });
+}
+
+function worldLog(text: string): void {
+  world.log.push(text);
+  if (mode === 'world') appendWorldLog(text);
+}
+
+function appendWorldLog(text: string): void {
+  const d = document.createElement('div');
+  d.className = 'sys';
+  d.textContent = text;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function enterWorld(): void {
+  mode = 'world';
+  battleCtx = null;
+  busy = false;
+  canvas.hidden = true;
+  worldCanvas.hidden = false;
+  logEl.innerHTML = '';
+  for (const t of world.log.slice(-40)) appendWorldLog(t);
+  setButtons(worldButtons);
+  lastWorldSig = '';
+  updateWorldPanel();
+}
+
+/** Return from a finished fight: rewards on victory, back to camp (minus some scrap) on defeat. */
+function finishBattle(): void {
+  const ctx = battleCtx;
+  if (!ctx || !state.winner || ctx.sandbox) return;
+  if (state.winner === 'player') {
+    if (ctx.site) world.cleared[ctx.site.id] = true;
+    world.scrap += ctx.reward;
+    worldLog(`${ctx.label}: victory. +${ctx.reward} scrap.`);
+  } else {
+    const loss = Math.floor(world.scrap / 4);
+    world.scrap -= loss;
+    const camp = siteById('camp');
+    if (camp) world.pos = { x: camp.x, y: camp.y };
+    world.path = [];
+    worldLog(`${ctx.label}: defeat. The squad drags itself back to camp${loss > 0 ? ` and loses ${loss} scrap` : ''}.`);
+  }
+  enterWorld();
+}
+
+function retreat(): void {
+  if (busy) return;
+  const ctx = battleCtx;
+  if (ctx && !ctx.sandbox && !state.winner) worldLog(`${ctx.label}: you pull back without finishing it.`);
+  enterWorld();
+}
+
+function randomEncounter(region: Region): void {
+  const d = Math.max(1, Math.min(4, region.danger));
+  const scenario = encounterScenario({
+    seed: Math.floor(rand(world) * 0x7fffffff),
+    biome: region.biome,
+    pods: d >= 3 ? 2 : 1,
+    podSize: d === 2 ? 3 : 2,
+    difficulty: d,
+  });
+  worldLog(`Ambush in ${region.name}!`);
+  beginBattle(scenario, { label: `Ambush in ${region.name}`, site: null, reward: d * 2, sandbox: false });
+}
+
+function hashStr(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function siteScenario(site: Site): Scenario {
+  const d = site.difficulty ?? 1;
+  return encounterScenario({
+    seed: hashStr(site.id), // same layout every attempt: the site is a place, not a dice roll
+    biome: regionAt(site).biome,
+    pods: 1 + Math.ceil(d / 2),
+    podSize: d === 1 ? 2 : 3,
+    difficulty: d,
+  });
+}
+
+function enterSite(site: Site | null): void {
+  if (mode !== 'world') return;
+  if (!site) {
+    worldLog('There is nothing to enter here.');
+    return;
+  }
+  if (site.kind === 'home') {
+    worldLog(`${site.name}: ${site.blurb} (Base view is next on the roadmap.)`);
+    return;
+  }
+  if (!site.difficulty) {
+    worldLog(`${site.name}: ${site.blurb}`);
+    return;
+  }
+  if (world.cleared[site.id]) {
+    worldLog(`${site.name} is already cleared.`);
+    return;
+  }
+  worldLog(`${site.name}: ${site.blurb}`);
+  beginBattle(siteScenario(site), {
+    label: `Assault on ${site.name}`,
+    site,
+    reward: site.reward ?? 0,
+    sandbox: false,
+  });
+}
+
+// ---------- world panel ----------
+
+let lastWorldSig = '';
+
+function updateWorldPanel(): void {
+  const region = regionAt(world.pos);
+  const site = siteNear(world.pos);
+  const clearable = WORLD.sites.filter((s) => s.difficulty);
+  const done = clearable.filter((s) => world.cleared[s.id]).length;
+  const sig = [region.id, site?.id ?? '-', site ? !!world.cleared[site.id] : '', world.scrap, done].join('|');
+  if (sig === lastWorldSig) return;
+  lastWorldSig = sig;
+
+  const danger = region.danger === 0 ? 'safe' : '●'.repeat(region.danger) + '○'.repeat(4 - region.danger);
+  const lines: string[] = [];
+  lines.push(`<h2>The Island</h2>`);
+  lines.push(`<div><b>${region.name}</b> <span style="opacity:.7">${region.biome}</span><br>Danger: ${danger}</div>`);
+  lines.push(`<div style="margin-top:6px">Scrap: <b>${world.scrap}</b> &middot; Sites cleared: ${done}/${clearable.length}</div>`);
+  if (site) {
+    let status = '';
+    if (site.difficulty) status = world.cleared[site.id] ? ' &mdash; cleared' : ` &mdash; hostile (${'!'.repeat(site.difficulty)}), reward ${site.reward ?? 0} scrap`;
+    const hint = site.kind === 'home' ? 'Press E to rest at camp.' : site.difficulty && !world.cleared[site.id] ? 'Press E to assault.' : '';
+    lines.push(
+      `<div style="margin-top:8px;padding:6px 8px;border-left:3px solid #7ec4e8;background:#1a2530"><b>${site.name}</b>${status}<br>` +
+        `<span style="opacity:.8">${site.blurb}</span>${hint ? `<br><span style="color:#e8b04a">${hint}</span>` : ''}</div>`,
+    );
+  }
+  lines.push(
+    `<div style="margin-top:10px;opacity:.55;font-size:11px">WASD / arrows: walk &middot; click map: travel<br>` +
+      `E: enter site &middot; G: debug overlay<br>Random fights trigger as you walk outside safe ground.</div>`,
+  );
+  panel.innerHTML = lines.join('');
+  renderActions(undefined);
+}
+
 // ---------- input ----------
+
+const heldKeys = new Set<string>();
+const MOVE_KEYS: Record<string, [number, number]> = {
+  w: [0, -1],
+  arrowup: [0, -1],
+  s: [0, 1],
+  arrowdown: [0, 1],
+  a: [-1, 0],
+  arrowleft: [-1, 0],
+  d: [1, 0],
+  arrowright: [1, 0],
+};
+
+function heldInput(): { dx: number; dy: number } | null {
+  let dx = 0;
+  let dy = 0;
+  for (const k of heldKeys) {
+    const v = MOVE_KEYS[k];
+    if (v) {
+      dx += v[0];
+      dy += v[1];
+    }
+  }
+  return dx !== 0 || dy !== 0 ? { dx: Math.sign(dx), dy: Math.sign(dy) } : null;
+}
 
 canvas.addEventListener('mousemove', (e) => {
   const p = renderer.tileAt(e.clientX, e.clientY, state);
@@ -335,9 +586,41 @@ canvas.addEventListener('click', (e) => {
   if (p) onClick(p);
 });
 
+worldCanvas.addEventListener('mousemove', (e) => {
+  worldView.hover = worldRenderer.toWorld(e.clientX, e.clientY);
+});
+worldCanvas.addEventListener('mouseleave', () => {
+  worldView.hover = null;
+});
+worldCanvas.addEventListener('click', (e) => {
+  if (mode !== 'world') return;
+  const p = worldRenderer.toWorld(e.clientX, e.clientY);
+  if (!p) return;
+  // Clicking a site's ring heads for its centre.
+  const target = siteNear(p);
+  walkTo(world, target ? { x: target.x, y: target.y } : p);
+});
+
+window.addEventListener('blur', () => heldKeys.clear());
+window.addEventListener('keyup', (e) => heldKeys.delete(e.key.toLowerCase()));
 window.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
+
+  if (mode === 'world') {
+    if (MOVE_KEYS[k]) {
+      e.preventDefault();
+      heldKeys.add(k);
+      return;
+    }
+    const b = currentButtons.find((x) => x.key === k);
+    if (b && b.enabled(undefined)) {
+      b.run();
+      lastWorldSig = '';
+    }
+    return;
+  }
+
   if (k === 'tab') {
     e.preventDefault();
     if (canAct()) selectNext();
@@ -348,18 +631,46 @@ window.addEventListener('keydown', (e) => {
     if (u) select(u.id);
     return;
   }
-  const b = buttons.find((x) => x.key === k);
+  const b = currentButtons.find((x) => x.key === k);
   if (b && b.enabled(selected())) b.run();
 });
 
 // ---------- boot ----------
 
-const first = living(state, 'player')[0];
-if (first) view.selectedId = first.id;
-refresh();
+enterWorld();
 
-function frame(): void {
-  renderer.draw(state, view);
+let lastFrame = performance.now();
+function frame(now: number): void {
+  const dt = Math.min(0.1, (now - lastFrame) / 1000);
+  lastFrame = now;
+  if (mode === 'world') {
+    const ev = stepWorld(world, dt, heldInput());
+    if (ev) randomEncounter(ev.region);
+    else {
+      updateWorldPanel();
+      worldRenderer.draw(world, worldView);
+    }
+  } else {
+    renderer.draw(state, view);
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// Scripted playthroughs (headless tests) drive the game through this; enabled with ?debug.
+if (params.has('debug')) {
+  Object.assign(window, {
+    __wrecked: {
+      world,
+      get mode() {
+        return mode;
+      },
+      get state() {
+        return state;
+      },
+      enterSite: (id: string) => enterSite(siteById(id) ?? null),
+      encounter: () => randomEncounter(regionAt(world.pos)),
+      finish: () => finishBattle(),
+    },
+  });
+}

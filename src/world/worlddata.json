@@ -1,0 +1,43 @@
+{
+  "_comment": "All coordinates are pixels in the 962x537 reference map (public/worldmap.png). Edit freely: coast = walkable island outline, regions = biome/danger zones (first match wins), sites = enterable places.",
+  "size": [962, 537],
+  "start": [255, 378],
+  "coast": [
+    [100, 318], [90, 270], [92, 235], [108, 200], [128, 168], [152, 135], [190, 102], [240, 82], [292, 72],
+    [332, 90], [372, 98], [410, 78], [445, 56], [520, 46], [590, 54], [632, 76], [650, 104], [690, 96],
+    [716, 74], [770, 58], [822, 54], [866, 68], [880, 100], [878, 140], [862, 166], [872, 196], [878, 232],
+    [868, 262], [836, 276], [806, 290], [798, 322], [802, 352], [782, 386], [748, 414], [702, 436],
+    [650, 452], [600, 470], [520, 482], [450, 487], [390, 492], [330, 497], [296, 490], [280, 468],
+    [258, 452], [232, 428], [208, 402], [196, 380], [196, 356], [150, 346]
+  ],
+  "regions": [
+    { "id": "camp", "name": "Survivors' Camp", "biome": "beach", "danger": 0, "shape": { "type": "circle", "x": 375, "y": 410, "r": 48 } },
+    { "id": "crater", "name": "Crater Peak", "biome": "volcano", "danger": 3, "shape": { "type": "circle", "x": 805, "y": 105, "r": 80 } },
+    { "id": "marsh", "name": "Shadow Marsh", "biome": "marsh", "danger": 2, "shape": { "type": "circle", "x": 735, "y": 195, "r": 90 } },
+    { "id": "peaks", "name": "Whispering Peaks", "biome": "mountain", "danger": 3, "shape": { "type": "circle", "x": 520, "y": 120, "r": 125 } },
+    { "id": "canyon", "name": "The Cragged Canyon", "biome": "canyon", "danger": 2, "shape": { "type": "poly", "points": [[90, 330], [88, 240], [125, 150], [190, 100], [290, 70], [335, 110], [275, 190], [245, 290], [200, 352]] } },
+    { "id": "forest", "name": "Old Forest", "biome": "forest", "danger": 2, "shape": { "type": "circle", "x": 385, "y": 195, "r": 100 } },
+    { "id": "wildlands", "name": "The Wildlands", "biome": "forest", "danger": 1, "shape": { "type": "circle", "x": 360, "y": 305, "r": 85 } },
+    { "id": "bay", "name": "Wrecker's Bay", "biome": "beach", "danger": 1, "shape": { "type": "circle", "x": 245, "y": 410, "r": 90 } },
+    { "id": "wastes", "name": "Desolate Wastes", "biome": "wastes", "danger": 2, "shape": { "type": "circle", "x": 640, "y": 350, "r": 170 } },
+    { "id": "shore", "name": "The Shoreline", "biome": "beach", "danger": 1, "shape": { "type": "circle", "x": 481, "y": 268, "r": 2000 } }
+  ],
+  "sites": [
+    { "id": "start", "name": "Landing Beach", "kind": "landmark", "x": 252, "y": 376, "radius": 22, "blurb": "Where you washed ashore. Splintered deck planks and a cooler full of warm drinks." },
+    { "id": "camp", "name": "Survivors' Camp", "kind": "home", "x": 374, "y": 408, "radius": 30, "blurb": "Your camp. Base building comes later: this is where the tents, workshop and research bench will go." },
+    { "id": "hull", "name": "Wrecked Hull", "kind": "wreck", "x": 224, "y": 392, "radius": 22, "difficulty": 1, "reward": 5, "blurb": "A split section of the ship's hull, picked over by somebody." },
+    { "id": "lifeboats", "name": "Broken Lifeboats", "kind": "wreck", "x": 292, "y": 468, "radius": 22, "difficulty": 1, "reward": 5, "blurb": "Smashed lifeboats half-buried in the sand." },
+    { "id": "ruins", "name": "Wildlands Ruins", "kind": "ruin", "x": 312, "y": 322, "radius": 22, "difficulty": 1, "reward": 8, "blurb": "Overgrown stonework older than the ship." },
+    { "id": "hut", "name": "Forest Hut", "kind": "ruin", "x": 327, "y": 246, "radius": 22, "difficulty": 2, "reward": 10, "blurb": "A lean-to hidden under the canopy, someone has been living here." },
+    { "id": "bridge-s", "name": "South Rope Bridge", "kind": "landmark", "x": 172, "y": 318, "radius": 20, "blurb": "A rope bridge across the river gorge." },
+    { "id": "bridge-m", "name": "Middle Rope Bridge", "kind": "landmark", "x": 191, "y": 240, "radius": 20, "blurb": "The planks creak. Somebody has been mending them recently." },
+    { "id": "bridge-n", "name": "North Rope Bridge", "kind": "landmark", "x": 258, "y": 152, "radius": 20, "blurb": "The northern crossing, high over the white water." },
+    { "id": "huts", "name": "Tribal Huts", "kind": "outpost", "x": 518, "y": 214, "radius": 26, "difficulty": 2, "reward": 12, "blurb": "A cluster of huts built from hull plating and driftwood." },
+    { "id": "mcaves", "name": "Mountain Caves", "kind": "cave", "x": 535, "y": 124, "radius": 22, "difficulty": 3, "reward": 15, "blurb": "A dark mouth in the rock, the air coming out of it is warm." },
+    { "id": "hcavern", "name": "Hidden Cavern", "kind": "cave", "x": 628, "y": 152, "radius": 22, "difficulty": 3, "reward": 18, "blurb": "Barely visible behind a rockfall." },
+    { "id": "sunken", "name": "Shadow Marsh Camp", "kind": "outpost", "x": 722, "y": 205, "radius": 26, "difficulty": 3, "reward": 16, "blurb": "Platforms on stilts above the black water." },
+    { "id": "coastal", "name": "Coastal Outpost", "kind": "outpost", "x": 838, "y": 218, "radius": 26, "difficulty": 3, "reward": 18, "blurb": "Tents above the tide line, with a good view of the wrecks offshore." },
+    { "id": "crater", "name": "Crater Peak", "kind": "cave", "x": 805, "y": 100, "radius": 26, "difficulty": 4, "reward": 25, "blurb": "The volcano smokes. Something is building at its foot." },
+    { "id": "border", "name": "Border Outpost", "kind": "outpost", "x": 665, "y": 404, "radius": 28, "difficulty": 2, "reward": 12, "blurb": "Tents and lookouts on the edge of the wastes." }
+  ]
+}

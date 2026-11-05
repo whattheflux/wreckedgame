@@ -8,11 +8,15 @@ export interface Pos {
   y: number;
 }
 
+/** Ground type of a battle map; drives generation and floor colour. Matches the world-map regions. */
+export type Biome = 'beach' | 'forest' | 'wastes' | 'marsh' | 'mountain' | 'canyon' | 'volcano';
+
 export interface GameMap {
   width: number;
   height: number;
   /** tiles[y][x] */
   tiles: Terrain[][];
+  biome?: Biome;
 }
 
 export interface Weapon {

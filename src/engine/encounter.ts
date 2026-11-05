@@ -1,0 +1,217 @@
+import type { Biome, GameMap, Pos, Terrain, Weapon } from './types';
+import type { Scenario, UnitSpec } from './battle';
+import { buildMap, foe, squadAt, WEAPONS } from './scenarios';
+import { SIGHT_RANGE } from './vision';
+import { randInt, rand, type RngHolder } from './rng';
+
+export const ENCOUNTER_W = 30;
+export const ENCOUNTER_H = 18;
+
+export interface EncounterOptions {
+  seed: number;
+  biome: Biome;
+  /** how many dormant pods */
+  pods: number;
+  /** enemies per pod */
+  podSize: number;
+  /** 1 (easy) .. 4 (hard): scales enemy stats and weaponry */
+  difficulty: number;
+}
+
+/** How cluttered each ground type is. Counts are attempts; sizes are max edge length in tiles. */
+interface Profile {
+  walls: [count: number, maxSize: number];
+  half: number;
+  full: number;
+  water: [count: number, maxSize: number];
+  /** extra structure applied after scatter */
+  rim?: 'sea-top' | 'canyon' | 'none';
+}
+
+export const PROFILES: Record<Biome, Profile> = {
+  beach: { walls: [3, 2], half: 22, full: 10, water: [0, 0], rim: 'sea-top' },
+  forest: { walls: [16, 3], half: 30, full: 14, water: [0, 0] },
+  wastes: { walls: [4, 2], half: 36, full: 8, water: [0, 0] },
+  marsh: { walls: [3, 2], half: 26, full: 6, water: [8, 4] },
+  mountain: { walls: [20, 4], half: 16, full: 16, water: [0, 0] },
+  canyon: { walls: [4, 3], half: 18, full: 10, water: [0, 0], rim: 'canyon' },
+  volcano: { walls: [10, 3], half: 14, full: 12, water: [6, 3] },
+};
+
+const NAMES = [
+  'Brock', 'Tyler', 'Dane', 'Cole', 'Reid', 'Chad', 'Troy', 'Wade', 'Kyle', 'Jace', 'Nate', 'Rhett',
+  'Colt', 'Grant', 'Hunter', 'Blake', 'Axel', 'Dex', 'Boone', 'Flint', 'Garrett', 'Heath', 'Jett', 'Knox',
+];
+
+/** Pod members sit in a tight cluster around the pod centre. */
+const CLUSTER: Array<[number, number]> = [[0, 0], [1, 0], [0, 1], [1, 1], [-1, 0], [0, -1], [-1, 1], [2, 0]];
+
+const MIN_POD_GAP = 6;
+
+function weaponFor(difficulty: number, i: number): Weapon {
+  const pool: Weapon[] =
+    difficulty >= 3
+      ? [WEAPONS.javelin, WEAPONS.flareGun, WEAPONS.slingshot, WEAPONS.pole]
+      : difficulty === 2
+        ? [WEAPONS.slingshot, WEAPONS.javelin, WEAPONS.pole]
+        : [WEAPONS.slingshot, WEAPONS.pole, WEAPONS.slingshot, WEAPONS.javelin];
+  return pool[i % pool.length];
+}
+
+const dist = (a: Pos, b: Pos): number => Math.hypot(a.x - b.x, a.y - b.y);
+
+/** 8-way flood over passable tiles, same movement rule as the battle engine (no corner cutting). */
+function floodFrom(map: GameMap, from: Pos): boolean[][] {
+  const seen = Array.from({ length: map.height }, () => Array<boolean>(map.width).fill(false));
+  const open = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < map.width && y < map.height && map.tiles[y][x] === 'floor';
+  if (!open(from.x, from.y)) return seen;
+  const q: Pos[] = [from];
+  seen[from.y][from.x] = true;
+  while (q.length > 0) {
+    const p = q.pop()!;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = p.x + dx;
+        const ny = p.y + dy;
+        if (!open(nx, ny) || seen[ny][nx]) continue;
+        if (dx !== 0 && dy !== 0 && (!open(p.x + dx, p.y) || !open(p.x, p.y + dy))) continue;
+        seen[ny][nx] = true;
+        q.push({ x: nx, y: ny });
+      }
+    }
+  }
+  return seen;
+}
+
+/** Carve an orthogonal L-shaped corridor of floor between two tiles (orthogonal steps only, so always walkable). */
+function carve(tiles: Terrain[][], a: Pos, b: Pos): void {
+  const set = (x: number, y: number): void => {
+    if (y >= 0 && y < tiles.length && x >= 0 && x < tiles[0].length) tiles[y][x] = 'floor';
+  };
+  const sx = Math.sign(b.x - a.x) || 1;
+  for (let x = a.x; x !== b.x; x += sx) set(x, a.y);
+  const sy = Math.sign(b.y - a.y) || 1;
+  for (let y = a.y; y !== b.y + sy && a.y !== b.y; y += sy) set(b.x, y);
+  set(b.x, b.y);
+}
+
+/**
+ * Build a skirmish for one world-map encounter or site assault. Deterministic per options.
+ * Guarantees: the squad starts on the left, no pod is within sight range of the squad (so every
+ * fight begins with a search), and every unit can walk to every other.
+ */
+export function encounterScenario(opts: EncounterOptions): Scenario {
+  const W = ENCOUNTER_W;
+  const H = ENCOUNTER_H;
+  const rng: RngHolder = { rngState: opts.seed | 0 };
+  const ri = (a: number, b: number): number => randInt(rng, a, b);
+  const profile = PROFILES[opts.biome];
+  const pods = Math.max(1, Math.min(opts.pods, 5));
+  const podSize = Math.max(1, Math.min(opts.podSize, CLUSTER.length));
+  const diff = Math.max(1, Math.min(opts.difficulty, 4));
+
+  // --- spawn layout first, terrain second, so we can keep spawns clear ---
+  const cy = ri(5, H - 6);
+  const squadPos: Array<[number, number]> = [[2, cy], [3, cy + 1], [3, cy - 1], [2, cy + 2]];
+  const squadCentre: Pos = { x: 3, y: cy };
+
+  const podCentres: Pos[] = [];
+  const minX = Math.ceil(squadCentre.x + SIGHT_RANGE + 3); // comfortably outside sight range
+  for (let tries = 0; podCentres.length < pods && tries < 400; tries++) {
+    const p = { x: ri(minX, W - 5), y: ri(3, H - 4) };
+    if (podCentres.some((q) => dist(p, q) < MIN_POD_GAP)) continue;
+    podCentres.push(p);
+  }
+  // Tight maps can run out of room; fall back to the free columns rather than dropping pods silently.
+  while (podCentres.length < pods) podCentres.push({ x: W - 5, y: 3 + podCentres.length * 3 });
+
+  const spawnTiles: Pos[] = [...squadPos.map(([x, y]) => ({ x, y }))];
+  const units: UnitSpec[] = [];
+  const names = [...NAMES];
+  for (let i = names.length - 1; i > 0; i--) {
+    const j = Math.floor(rand(rng) * (i + 1));
+    [names[i], names[j]] = [names[j], names[i]];
+  }
+
+  let n = 0;
+  podCentres.forEach((c, pi) => {
+    const podId = String.fromCharCode(65 + pi);
+    for (let m = 0; m < podSize; m++) {
+      const [ox, oy] = CLUSTER[m];
+      const pos = { x: Math.min(W - 3, Math.max(1, c.x + ox)), y: Math.min(H - 3, Math.max(1, c.y + oy)) };
+      spawnTiles.push(pos);
+      n++;
+      const weapon = weaponFor(diff, m + pi);
+      units.push(foe(`e${n}`, names[(n - 1) % names.length], pos.x, pos.y, podId, weapon, 7 + diff + (weapon === WEAPONS.pole ? 2 : 0), 52 + diff * 4));
+    }
+  });
+
+  // --- terrain ---
+  const rectInto = (set: (x: number, y: number, t: Terrain) => void, x0: number, y0: number, x1: number, y1: number, t: Terrain): void => {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(x, y, t);
+  };
+  const map = buildMap(
+    W,
+    H,
+    (set) => {
+      const bx = (): number => ri(1, W - 2);
+      const by = (): number => ri(1, H - 2);
+      if (profile.rim === 'sea-top') rectInto(set, 0, 0, W - 1, 1, 'water');
+      if (profile.rim === 'canyon') {
+        // two cliff bands running east-west with ragged gaps
+        for (let x = 0; x < W; x++) {
+          if (x % 7 !== 3) rectInto(set, x, 2, x, 3, 'wall');
+          if (x % 8 !== 5) rectInto(set, x, H - 4, x, H - 3, 'wall');
+        }
+      }
+      for (let i = 0; i < profile.walls[0]; i++) {
+        const x = bx();
+        const y = by();
+        rectInto(set, x, y, x + ri(1, profile.walls[1]) - 1, y + ri(1, profile.walls[1]) - 1, 'wall');
+      }
+      for (let i = 0; i < profile.water[0]; i++) {
+        const x = bx();
+        const y = by();
+        rectInto(set, x, y, x + ri(1, profile.water[1]) - 1, y + ri(1, profile.water[1]) - 1, 'water');
+      }
+      for (let i = 0; i < profile.half; i++) set(bx(), by(), 'half');
+      for (let i = 0; i < profile.full; i++) set(bx(), by(), 'full');
+      // keep a clearing around each spawn so nobody starts inside a rock
+      for (const t of spawnTiles) rectInto(set, t.x - 1, t.y - 1, t.x + 1, t.y + 1, 'floor');
+    },
+    opts.biome,
+  );
+
+  // --- connectivity: carve to anything the squad can't walk to ---
+  const start = { x: squadPos[0][0], y: squadPos[0][1] };
+  const reach = floodFrom(map, start);
+  for (const t of spawnTiles) {
+    if (reach[t.y][t.x]) continue;
+    // carve toward the nearest already-reachable tile, then re-flood so later spawns can reuse the corridor
+    let best: Pos = start;
+    let bestD = Infinity;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!reach[y][x]) continue;
+        const d = Math.abs(x - t.x) + Math.abs(y - t.y);
+        if (d < bestD) {
+          bestD = d;
+          best = { x, y };
+        }
+      }
+    }
+    carve(map.tiles, best, t);
+    const again = floodFrom(map, start);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) reach[y][x] = again[y][x];
+  }
+
+  const name = `${opts.biome[0].toUpperCase()}${opts.biome.slice(1)} skirmish`;
+  return {
+    name,
+    seed: (opts.seed ^ 0x5bd1e995) | 0,
+    map: () => structuredClone(map),
+    units: [...squadAt(squadPos), ...units],
+  };
+}
