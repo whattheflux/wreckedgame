@@ -34,13 +34,17 @@ def cut(path):
             x0, x1 = int(c * cw) + 8, int((c + 1) * cw) - 8
             y0, y1 = int(r * ch + ch * 0.17), int((r + 1) * ch) - 4
             cell = a[y0:y1, x0:x1]
-            fg = ndi.binary_opening(np.sqrt(((cell - BG) ** 2).sum(2)) > 30, iterations=1)
+            d = np.sqrt(((cell - BG) ** 2).sum(2))
+            spread = cell.max(2) - cell.min(2)
+            # Figure = clearly different from the neutral grey, or tinted (the ground and its grid are
+            # neutral, so a tinted pixel is hair, skin or cloth even when it is close in brightness).
+            fg = ndi.binary_opening((d > 30) | ((spread > 14) & (d > 10)), iterations=1)
             lab, n = ndi.label(fg)
             if n == 0:
                 raise SystemExit(f'empty cell {DIRS[r][c]}')
             keep = ndi.binary_fill_holes(lab == 1 + int(np.argmax(ndi.sum(fg, lab, range(1, n + 1)))))
             alpha = np.where(keep, 255.0, 0.0)
-            mx, spread = cell.max(2), cell.max(2) - cell.min(2)
+            mx = cell.max(2)
             alpha[keep & (mx < 58) & (spread < 9)] = 110  # the floor shadow: translucent
             rgba = np.dstack([cell, alpha]).astype(np.uint8)
             rgba[~keep] = 0

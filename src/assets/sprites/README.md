@@ -36,6 +36,5 @@ folder can start with just `down` and `up` and grow. Units start facing right (s
 
 `tools/slice_sprite_sheet.py` cuts a 4x2 sheet (labelled cells on a flat grey ground) into the eight
 transparent 256x256 files. Use the same `--scale` for every character so they stay in proportion
-(0.4257 matches the player and Scott). It can also mirror one facing into another (`--flip`) or copy a
-stand-in (`--copy`) when a sheet is missing a view. Scott's `down-right` is a mirror of his
-`down-left`, and his `up-left` / `up-right` are copies of `up`, until real art replaces them.
+(0.4257 matches the player, Scott and Amy). If a sheet is missing a view or one is in the wrong kit,
+`--only` drops it, `--flip` mirrors another facing into its place and `--copy` makes a stand-in.
