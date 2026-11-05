@@ -44,6 +44,8 @@ import { rand } from './engine/rng';
 import { esc, hideOverlay, overlayOpen, showCreate, showPrep, showTitle } from './ui/screens';
 import { clearSave, loadGame, saveGame } from './world/save';
 import { BoardRenderer, type ViewState } from './render/board';
+import { preloadArt } from './render/sprites';
+import { preloadTerrain } from './render/terrain';
 import { WorldRenderer, type WorldView } from './world/render';
 import {
   WORLD,
@@ -63,6 +65,8 @@ const panel = document.getElementById('panel') as HTMLDivElement;
 const actions = document.getElementById('actions') as HTMLDivElement;
 const logEl = document.getElementById('log') as HTMLDivElement;
 const renderer = new BoardRenderer(canvas);
+// The squad's art is tiny next to a battle's worth of rivals: have it ready before the first fight.
+void preloadArt(['pc-male', 'pc-female', 'amy', 'scott', 'tyson', 'anna']);
 const worldRenderer = new WorldRenderer(worldCanvas);
 
 const params = new URLSearchParams(location.search);
@@ -449,6 +453,9 @@ function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
   battleCtx = ctx;
   // Real fights field the persistent squad; sandbox battles use the stock one and have no consequences.
   state = createBattle(ctx.sandbox ? scenario : deployRoster(scenario, world.roster, world.squad));
+  // Start fetching everyone's art (and the ground's) right away; units are held back until theirs is in.
+  void preloadArt(state.units.map((u) => u.sprite ?? u.name.toLowerCase()));
+  void preloadTerrain(state.map.biome);
   busy = false;
   logIndex = 0;
   logEl.innerHTML = '';

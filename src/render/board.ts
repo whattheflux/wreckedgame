@@ -1,8 +1,9 @@
-import type { Biome, GameState, Pos, Terrain, Unit } from '../engine/types';
+import type { GameState, Pos, Unit } from '../engine/types';
 import { coverAgainst, dist, posKey, type PathNode } from '../engine/grid';
 import type { Hint } from '../engine/hint';
 import { computeShot, type ShotPreview } from '../engine/combat';
 import { dirFromDelta, koUrl, loadedImage, spriteUrl, type Dir } from './sprites';
+import { terrainImage } from './terrain';
 
 export interface ViewState {
   selectedId: string | null;
@@ -28,25 +29,6 @@ interface Effect {
   born: number;
   ttl: number;
 }
-
-const TERRAIN_COLOR: Record<Terrain, string> = {
-  floor: '#6b6246',
-  wall: '#3f444c',
-  half: '#6b6246',
-  full: '#6b6246',
-  water: '#15324a',
-};
-
-const BIOME_FLOOR: Record<Biome, string> = {
-  beach: '#7a7150',
-  forest: '#3f5a36',
-  wastes: '#6e5a46',
-  marsh: '#46583f',
-  mountain: '#5a5d63',
-  canyon: '#74523c',
-  volcano: '#4a3330',
-};
-const BIOME_WATER: Partial<Record<Biome, string>> = { marsh: '#1f4a45', volcano: '#7a2a10' };
 
 const TEAM_COLOR = { player: '#3d8fc2', enemy: '#c2503d' } as const;
 
@@ -151,6 +133,7 @@ export class BoardRenderer {
     this.drawFog(state, view);
     this.drawOverlays(state, view);
     this.drawShotLine(state, view);
+    for (const u of state.units) if (!u.alive && !u.downed && this.canSee(u, view)) this.drawFallen(u);
     for (const u of state.units) if (u.downed && !u.alive) this.drawDowned(u, state);
     for (const u of state.units) if (u.alive && this.canSee(u, view)) this.drawUnit(u, state, view);
     this.drawPreviewLabel(state, view);
@@ -173,36 +156,19 @@ export class BoardRenderer {
 
   private drawTerrain(state: GameState): void {
     const { ctx, tile } = this;
+    const biome = state.map.biome;
+    const smooth = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false; // chunky pixels, not blur
     for (let y = 0; y < state.map.height; y++) {
       for (let x = 0; x < state.map.width; x++) {
         const t = state.map.tiles[y][x];
         const o = this.px({ x, y });
-        ctx.fillStyle =
-          t === 'water'
-            ? (state.map.biome && BIOME_WATER[state.map.biome]) || TERRAIN_COLOR.water
-            : t === 'wall'
-              ? TERRAIN_COLOR.wall
-              : state.map.biome
-                ? BIOME_FLOOR[state.map.biome]
-                : TERRAIN_COLOR[t];
-        ctx.fillRect(o.x, o.y, tile, tile);
-        if (t === 'wall') {
-          ctx.fillStyle = '#585e68';
-          ctx.fillRect(o.x + 2, o.y + 2, tile - 4, tile - 4);
-        } else if (t === 'half') {
-          const s = tile * 0.55;
-          ctx.fillStyle = '#9a8660';
-          ctx.fillRect(o.x + (tile - s) / 2, o.y + (tile - s) / 2, s, s);
-        } else if (t === 'full') {
-          const s = tile * 0.86;
-          ctx.fillStyle = '#7a5c3e';
-          ctx.fillRect(o.x + (tile - s) / 2, o.y + (tile - s) / 2, s, s);
-          ctx.strokeStyle = '#4e3a26';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(o.x + (tile - s) / 2, o.y + (tile - s) / 2, s, s);
-        }
+        // cover objects stand on ordinary ground, everything else is its own surface
+        ctx.drawImage(terrainImage(biome, t === 'half' || t === 'full' ? 'floor' : t, x, y), o.x, o.y, tile, tile);
+        if (t === 'half' || t === 'full') ctx.drawImage(terrainImage(biome, t, x, y), o.x, o.y, tile, tile);
       }
     }
+    ctx.imageSmoothingEnabled = smooth;
   }
 
   /** Your own units are always drawn; enemies only while one of your units has them in sight. */
@@ -289,11 +255,36 @@ export class BoardRenderer {
     const hoverNode = view.hover && view.reach ? view.reach.get(posKey(view.hover.x, view.hover.y)) : undefined;
 
     if (view.mode === 'move' && view.reach) {
+      // How far you can go: a light wash plus a bold outline round the edge of each zone (blue = one move,
+      // amber = dash), so the ground underneath stays readable instead of being buried under tint.
+      const zoneOf = (x: number, y: number): 0 | 1 | 2 => {
+        const n = view.reach?.get(posKey(x, y));
+        return !n || n.cost === 0 ? 0 : n.cost <= sel.mobility ? 1 : 2;
+      };
       for (const n of view.reach.values()) {
         if (n.cost === 0) continue;
         const o = this.px(n.pos);
-        ctx.fillStyle = n.cost <= sel.mobility ? 'rgba(80,170,255,0.30)' : 'rgba(255,205,80,0.26)';
-        ctx.fillRect(o.x + 1, o.y + 1, tile - 2, tile - 2);
+        ctx.fillStyle = n.cost <= sel.mobility ? 'rgba(80,170,255,0.13)' : 'rgba(255,205,80,0.11)';
+        ctx.fillRect(o.x, o.y, tile, tile);
+      }
+      ctx.lineWidth = 2;
+      for (const n of view.reach.values()) {
+        const z = zoneOf(n.pos.x, n.pos.y);
+        if (z === 0) continue;
+        const o = this.px(n.pos);
+        ctx.strokeStyle = z === 1 ? 'rgba(110,190,255,0.85)' : 'rgba(255,205,80,0.8)';
+        ctx.beginPath();
+        // the unit's own tile counts as the blue zone for outlining purposes
+        const same = (dx: number, dy: number): boolean => {
+          const nz = zoneOf(n.pos.x + dx, n.pos.y + dy);
+          const own = n.pos.x + dx === sel.pos.x && n.pos.y + dy === sel.pos.y;
+          return z === 1 ? nz === 1 || own || false : nz === 2 || nz === 1 || own;
+        };
+        if (!same(0, -1)) { ctx.moveTo(o.x, o.y + 1); ctx.lineTo(o.x + tile, o.y + 1); }
+        if (!same(0, 1)) { ctx.moveTo(o.x, o.y + tile - 1); ctx.lineTo(o.x + tile, o.y + tile - 1); }
+        if (!same(-1, 0)) { ctx.moveTo(o.x + 1, o.y); ctx.lineTo(o.x + 1, o.y + tile); }
+        if (!same(1, 0)) { ctx.moveTo(o.x + tile - 1, o.y); ctx.lineTo(o.x + tile - 1, o.y + tile); }
+        ctx.stroke();
       }
       // Cover you would get on each reachable tile, against the nearest enemy you can see.
       const nearest = (p: Pos): Unit | undefined => foes.reduce<Unit | undefined>((b, e) => (!b || dist(p, e.pos) < dist(p, b.pos) ? e : b), undefined);
@@ -462,6 +453,31 @@ export class BoardRenderer {
     ctx.setLineDash([]);
   }
 
+  /** Someone who is out for good (a beaten rival, or one of yours who was lost): lying where they fell, nothing to click. */
+  private drawFallen(u: Unit): void {
+    const { ctx, tile } = this;
+    const c = this.center(u.pos);
+    const ko = koFor(u);
+    if (ko) {
+      const h = tile * 1.45;
+      const w = h * (ko.naturalWidth / ko.naturalHeight);
+      ctx.globalAlpha = 0.92;
+      ctx.drawImage(ko, c.x - w / 2, c.y - h / 2, w, h);
+      ctx.globalAlpha = 1;
+      return;
+    }
+    // no knocked-out art for this one: a small grey X so the spot still shows where they went down
+    const r = tile * 0.2;
+    ctx.strokeStyle = 'rgba(190,200,210,0.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(c.x - r, c.y - r);
+    ctx.lineTo(c.x + r, c.y + r);
+    ctx.moveTo(c.x + r, c.y - r);
+    ctx.lineTo(c.x - r, c.y + r);
+    ctx.stroke();
+  }
+
   /** A knocked-down unit: a grey, crossed-out marker that still occupies its tile (an ally can revive it). */
   private drawDowned(u: Unit, state: GameState): void {
     const { ctx, tile } = this;
@@ -517,6 +533,8 @@ export class BoardRenderer {
     const exhausted = u.team === 'player' && state.active === 'player' && u.ap <= 0;
 
     const art = spriteFor(u, this.facingOf(u));
+    // Art exists but is still arriving: draw nothing yet instead of flashing the placeholder circle.
+    if (!art && spriteUrl(u.sprite ?? u.name.toLowerCase(), this.facingOf(u))) return;
     const feetY = c.y + tile * 0.42;
     const artH = tile * 1.6;
 

@@ -60,3 +60,13 @@ describe('bundled art', () => {
     expect(spriteUrl('nobody', 'down')).toBeNull();
   });
 });
+
+describe('preloading', () => {
+  it('lists every picture bundled for a key and nothing for a stranger', async () => {
+    const { artUrls } = await import('./sprites');
+    const urls = artUrls(['pc-male']);
+    expect(urls.length).toBe(DIRS.length + 1); // eight facings and the knocked-out pose
+    expect(new Set(urls).size).toBe(urls.length);
+    expect(artUrls(['nobody'])).toEqual([]);
+  });
+});

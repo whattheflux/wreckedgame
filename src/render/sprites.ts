@@ -84,6 +84,40 @@ export const koUrl = (id: string): string | null => SETS.get(id)?.ko ?? null;
 /** A picture to show in menus (front-facing if there is one). */
 export const previewUrl = (id: string): string | null => spriteUrl(id, 'down');
 
+/** Every picture bundled for these art keys (all facings, the single image, the knocked-out pose). */
+export function artUrls(keys: readonly string[]): string[] {
+  const urls = new Set<string>();
+  for (const k of keys) {
+    const set = SETS.get(k);
+    if (!set) continue;
+    for (const u of Object.values(set.dirs)) urls.add(u as string);
+    if (set.single) urls.add(set.single);
+    if (set.ko) urls.add(set.ko);
+  }
+  return [...urls];
+}
+
+/**
+ * Load images ahead of the first draw. Resolves when they are all in (or failed), or after `ms` so a slow
+ * connection never holds up play. Loaded images go into the same cache `loadedImage` reads.
+ */
+export function preloadUrls(urls: readonly string[], ms = 2500): Promise<void> {
+  if (urls.length === 0) return Promise.resolve();
+  const loads = urls.map(
+    (u) =>
+      new Promise<void>((resolve) => {
+        const img = images.get(u) ?? new Image();
+        images.set(u, img);
+        if (img.complete && img.naturalWidth > 0) return resolve();
+        img.onload = img.onerror = () => resolve();
+        if (!img.src) img.src = u;
+      }),
+  );
+  return Promise.race([Promise.all(loads).then(() => undefined), new Promise<void>((r) => setTimeout(r, ms))]);
+}
+
+export const preloadArt = (keys: readonly string[], ms?: number): Promise<void> => preloadUrls(artUrls(keys), ms);
+
 const images = new Map<string, HTMLImageElement>();
 
 /** The loaded image for a url (starting the load on first use), or null while it is still loading. */
