@@ -31,3 +31,11 @@ folder can start with just `down` and `up` and grow. Units start facing right (s
   characters relative to each other on the canvas rather than resizing each to fill the frame.
 - Keep a calm, readable silhouette: the figure is small on screen, so contrast against grass, sand and
   rock matters more than fine detail.
+
+## Making sprites from a facing sheet
+
+`tools/slice_sprite_sheet.py` cuts a 4x2 sheet (labelled cells on a flat grey ground) into the eight
+transparent 256x256 files. Use the same `--scale` for every character so they stay in proportion
+(0.4257 matches the player and Scott). It can also mirror one facing into another (`--flip`) or copy a
+stand-in (`--copy`) when a sheet is missing a view. Scott's `down-right` is a mirror of his
+`down-left`, and his `up-left` / `up-right` are copies of `up`, until real art replaces them.
