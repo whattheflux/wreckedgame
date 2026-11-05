@@ -2,7 +2,7 @@ import type { GameState, Pos, Unit } from '../engine/types';
 import { coverAgainst, dist, posKey, type PathNode } from '../engine/grid';
 import type { Hint } from '../engine/hint';
 import { computeShot, EXPOSED_CRIT_BONUS, type ShotPreview } from '../engine/combat';
-import { dirFromDelta, koUrl, loadedImage, spriteUrl, type Dir } from './sprites';
+import { DIRS, dirFromDelta, koUrl, loadedImage, spriteUrl, type Dir } from './sprites';
 import { terrainImage } from './terrain';
 
 export interface ViewState {
@@ -50,8 +50,14 @@ export class BoardRenderer {
   private oy = 0;
   /** Camera: `zoom` multiplies the fit-to-window tile size; the view eases toward `goal` (tile coordinates). */
   private zoom = 1.5;
+  /** Camera centre and where it is easing to, in (fractional) map-tile coordinates, independent of rotation. */
   private cam: { x: number; y: number } | null = null;
   private goal = { x: 0, y: 0 };
+  /** Quarter turns clockwise: 0 = north up. Only the view turns; units stay upright. */
+  private rot = 0;
+  private mw = 1;
+  private mh = 1;
+  private fit = 32;
   private lastLayout = performance.now();
   private effects: Effect[] = [];
   /** which way each unit last moved or fired; purely visual, so it lives here and not in the game state */
@@ -81,12 +87,79 @@ export class BoardRenderer {
     return this.zoom > 1;
   }
 
+  static readonly MAX_ZOOM = 3;
+
+  /** Multiply the zoom (clamped 1..3). With a cursor position, the map point under it stays put. */
+  zoomBy(factor: number, clientX?: number, clientY?: number): void {
+    const next = Math.min(BoardRenderer.MAX_ZOOM, Math.max(1, this.zoom * factor));
+    if (next === this.zoom) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const w = rect.width;
+    const h = rect.height;
+    const cx = clientX === undefined ? w / 2 : clientX - rect.left;
+    const cy = clientY === undefined ? h / 2 : clientY - rect.top;
+    const oldTile = this.tile;
+    const newTile = Math.max(12, Math.round(this.fit * next));
+    this.zoom = next;
+    if (clientX === undefined || !this.cam) return;
+    // the map point under the cursor, in view tiles, then the view centre that keeps it under the cursor
+    const vx = (cx - this.ox) / oldTile;
+    const vy = (cy - this.oy) / oldTile;
+    const c = this.fromView(vx - (cx - w / 2) / newTile, vy - (cy - h / 2) / newTile);
+    this.cam = c;
+    this.goal = { ...c };
+  }
+
+  /** Turn the view a quarter turn (+1 clockwise, -1 anticlockwise). */
+  rotate(step: 1 | -1): void {
+    this.rot = (this.rot + step + 4) % 4;
+  }
+
+  get zoomLevel(): number {
+    return this.zoom;
+  }
+
+  /** Map-tile coordinates (fractional, centres at +0.5) -> view-tile coordinates for the current rotation. */
+  private toView(x: number, y: number): { x: number; y: number } {
+    const W = this.mw;
+    const H = this.mh;
+    switch (this.rot) {
+      case 1: return { x: H - y, y: x };
+      case 2: return { x: W - x, y: H - y };
+      case 3: return { x: y, y: W - x };
+      default: return { x, y };
+    }
+  }
+
+  private fromView(vx: number, vy: number): { x: number; y: number } {
+    const W = this.mw;
+    const H = this.mh;
+    switch (this.rot) {
+      case 1: return { x: vy, y: H - vx };
+      case 2: return { x: W - vx, y: H - vy };
+      case 3: return { x: W - vy, y: vx };
+      default: return { x: vx, y: vy };
+    }
+  }
+
+  /** Map-tile delta for a one-tile step on screen (dx, dy), used to find the neighbour across a screen edge. */
+  private screenToMapDelta(dx: number, dy: number): [number, number] {
+    switch (this.rot) {
+      case 1: return [dy, -dx];
+      case 2: return [-dx, -dy];
+      case 3: return [-dy, dx];
+      default: return [dx, dy];
+    }
+  }
+
   resetFacing(): void {
     this.facing.clear();
   }
 
+  /** The way the unit faces on screen: its map facing turned with the view. */
   private facingOf(u: Unit): Dir {
-    return this.facing.get(u.id) ?? (u.team === 'player' ? 'right' : 'left');
+    const d = this.facing.get(u.id) ?? (u.team === 'player' ? 'right' : 'left');
+    return DIRS[(DIRS.indexOf(d) + 2 * this.rot) % 8];
   }
 
   addTextEffect(at: Pos, text: string, color: string, ttl = 1500): void {
@@ -109,9 +182,15 @@ export class BoardRenderer {
   /** Canvas pixel -> tile coordinate, or null if outside the map. */
   tileAt(clientX: number, clientY: number, state: GameState): Pos | null {
     const rect = this.canvas.getBoundingClientRect();
-    const x = Math.floor((clientX - rect.left - this.ox) / this.tile);
-    const y = Math.floor((clientY - rect.top - this.oy) / this.tile);
-    if (x < 0 || y < 0 || x >= state.map.width || y >= state.map.height) return null;
+    this.mw = state.map.width;
+    this.mh = state.map.height;
+    const vx = Math.floor((clientX - rect.left - this.ox) / this.tile);
+    const vy = Math.floor((clientY - rect.top - this.oy) / this.tile);
+    // cell indices turn like cell centres do, so go via the centre and back
+    const m = this.fromView(vx + 0.5, vy + 0.5);
+    const x = Math.floor(m.x);
+    const y = Math.floor(m.y);
+    if (vx < 0 || vy < 0 || vx >= this.viewW() || vy >= this.viewH() || x < 0 || y < 0 || x >= state.map.width || y >= state.map.height) return null;
     return { x, y };
   }
 
@@ -124,7 +203,12 @@ export class BoardRenderer {
       this.canvas.height = Math.round(h * dpr);
     }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const fit = Math.floor(Math.min(w / state.map.width, h / state.map.height));
+    this.mw = state.map.width;
+    this.mh = state.map.height;
+    const vw = this.viewW();
+    const vh = this.viewH();
+    const fit = Math.floor(Math.min(w / vw, h / vh));
+    this.fit = fit;
     this.tile = Math.max(12, Math.round(fit * this.zoom));
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.lastLayout) / 1000);
@@ -139,13 +223,23 @@ export class BoardRenderer {
       if (px <= len) return Math.floor((len - px) / 2);
       return Math.round(Math.min(0, Math.max(len - px, len / 2 - c * this.tile)));
     };
-    this.ox = axis(w, state.map.width, this.cam.x);
-    this.oy = axis(h, state.map.height, this.cam.y);
+    const cv = this.toView(this.cam.x, this.cam.y);
+    this.ox = axis(w, vw, cv.x);
+    this.oy = axis(h, vh, cv.y);
     return { w, h };
   }
 
+  private viewW(): number {
+    return this.rot % 2 ? this.mh : this.mw;
+  }
+
+  private viewH(): number {
+    return this.rot % 2 ? this.mw : this.mh;
+  }
+
   private px(p: Pos): { x: number; y: number } {
-    return { x: this.ox + p.x * this.tile, y: this.oy + p.y * this.tile };
+    const v = this.toView(p.x + 0.5, p.y + 0.5);
+    return { x: this.ox + (v.x - 0.5) * this.tile, y: this.oy + (v.y - 0.5) * this.tile };
   }
 
   private center(p: Pos): { x: number; y: number } {
@@ -169,18 +263,18 @@ export class BoardRenderer {
     for (const u of state.units) if (u.alive && this.canSee(u, view)) this.drawUnit(u, state, view);
     this.drawPreviewLabel(state, view);
     this.drawEffects();
-    this.drawHint(state, view);
+    this.drawHint(view);
 
     ctx.strokeStyle = 'rgba(255,255,255,0.04)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let x = 0; x <= state.map.width; x++) {
+    for (let x = 0; x <= this.viewW(); x++) {
       ctx.moveTo(this.ox + x * tile + 0.5, this.oy);
-      ctx.lineTo(this.ox + x * tile + 0.5, this.oy + state.map.height * tile);
+      ctx.lineTo(this.ox + x * tile + 0.5, this.oy + this.viewH() * tile);
     }
-    for (let y = 0; y <= state.map.height; y++) {
+    for (let y = 0; y <= this.viewH(); y++) {
       ctx.moveTo(this.ox, this.oy + y * tile + 0.5);
-      ctx.lineTo(this.ox + state.map.width * tile, this.oy + y * tile + 0.5);
+      ctx.lineTo(this.ox + this.viewW() * tile, this.oy + y * tile + 0.5);
     }
     ctx.stroke();
   }
@@ -226,16 +320,17 @@ export class BoardRenderer {
   }
 
   /** Pulsing arrow on the edge of the map pointing toward the nearest undiscovered group. */
-  private drawHint(state: GameState, view: ViewState): void {
+  private drawHint(view: ViewState): void {
     const h = view.hint;
     if (!h) return;
     const { ctx, tile } = this;
-    const bw = state.map.width * tile;
-    const bh = state.map.height * tile;
+    const bw = this.viewW() * tile;
+    const bh = this.viewH() * tile;
+    const ang = h.angle + (this.rot * Math.PI) / 2;
     const cx = this.ox + bw / 2;
     const cy = this.oy + bh / 2;
-    const dx = Math.cos(h.angle);
-    const dy = Math.sin(h.angle);
+    const dx = Math.cos(ang);
+    const dy = Math.sin(ang);
     const margin = 34;
     const tx = Math.abs(dx) > 1e-6 ? (bw / 2 - margin) / Math.abs(dx) : Infinity;
     const ty = Math.abs(dy) > 1e-6 ? (bh / 2 - margin) / Math.abs(dy) : Infinity;
@@ -246,7 +341,7 @@ export class BoardRenderer {
     ctx.save();
     ctx.globalAlpha = 0.65 + 0.35 * Math.sin(performance.now() / 350);
     ctx.translate(px, py);
-    ctx.rotate(h.angle);
+    ctx.rotate(ang);
     ctx.fillStyle = '#e8b04a';
     ctx.strokeStyle = 'rgba(0,0,0,0.65)';
     ctx.lineWidth = 2;
@@ -306,7 +401,9 @@ export class BoardRenderer {
         ctx.strokeStyle = z === 1 ? 'rgba(110,190,255,0.85)' : 'rgba(255,205,80,0.8)';
         ctx.beginPath();
         // the unit's own tile counts as the blue zone for outlining purposes
-        const same = (dx: number, dy: number): boolean => {
+        // dx, dy are screen steps; the neighbour across that edge is found in map coordinates
+        const same = (sx: number, sy: number): boolean => {
+          const [dx, dy] = this.screenToMapDelta(sx, sy);
           const nz = zoneOf(n.pos.x + dx, n.pos.y + dy);
           const own = n.pos.x + dx === sel.pos.x && n.pos.y + dy === sel.pos.y;
           return z === 1 ? nz === 1 || own || false : nz === 2 || nz === 1 || own;

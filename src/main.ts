@@ -64,6 +64,7 @@ const worldCanvas = document.getElementById('world') as HTMLCanvasElement;
 const panel = document.getElementById('panel') as HTMLDivElement;
 const actions = document.getElementById('actions') as HTMLDivElement;
 const logEl = document.getElementById('log') as HTMLDivElement;
+const camctl = document.getElementById('camctl') as HTMLDivElement;
 const rosterEl = document.getElementById('roster') as HTMLDivElement;
 const renderer = new BoardRenderer(canvas);
 // The squad's art is tiny next to a battle's worth of rivals: have it ready before the first fight.
@@ -238,6 +239,34 @@ function renderRoster(): void {
     })
     .join('');
 }
+
+// ---------- camera controls ----------
+
+function cameraCmd(cmd: string): void {
+  if (cmd === 'cw') renderer.rotate(1);
+  else if (cmd === 'ccw') renderer.rotate(-1);
+  else if (cmd === 'in') renderer.zoomBy(1.25);
+  else if (cmd === 'out') renderer.zoomBy(1 / 1.25);
+  else if (cmd === 'fit') {
+    renderer.toggleZoom();
+    focusSelected();
+  }
+  lastWorldSig = '';
+}
+
+camctl.addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLElement>('button[data-cam]');
+  if (b) cameraCmd(b.dataset.cam ?? '');
+});
+
+canvas.addEventListener(
+  'wheel',
+  (e) => {
+    e.preventDefault();
+    renderer.zoomBy(Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
+  },
+  { passive: false },
+);
 
 rosterEl.addEventListener('click', (e) => {
   const card = (e.target as HTMLElement).closest<HTMLElement>('.rc');
@@ -536,6 +565,7 @@ function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
   if (first) view.selectedId = first.id;
   squadSig = '';
   rosterEl.hidden = false;
+  camctl.hidden = false;
   focusSelected(true);
   toast(ctx.label);
   refresh();
@@ -586,6 +616,7 @@ function enterWorld(): void {
   canvas.hidden = true;
   worldCanvas.hidden = false;
   rosterEl.hidden = true;
+  camctl.hidden = true;
   logEl.innerHTML = '';
   for (const t of world.log.slice(-40)) appendWorldLog(t);
   setButtons(over ? gameOverButtons : worldButtons);
@@ -867,10 +898,12 @@ window.addEventListener('keydown', (e) => {
     if (u) select(u.id);
     return;
   }
-  if (k === 'z' && mode === 'battle') {
-    renderer.toggleZoom();
-    focusSelected();
-    return;
+  if (mode === 'battle' && !overlayOpen()) {
+    const cam = { z: 'fit', '[': 'ccw', ']': 'cw', '+': 'in', '=': 'in', '-': 'out', _: 'out' }[k];
+    if (cam) {
+      cameraCmd(cam);
+      return;
+    }
   }
   const b = currentButtons.find((x) => x.key === k);
   if (b && b.enabled(selected())) b.run();
