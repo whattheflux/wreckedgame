@@ -1,7 +1,15 @@
 import {
+  CLIQUES,
+  INJURIES,
   SCENARIOS,
+  TRAITS,
+  applyBattleResult,
   computeShot,
   createBattle,
+  deployRoster,
+  effectiveStats,
+  restAtCamp,
+  xpToNext,
   encounterScenario,
   endTurn,
   enemyStep,
@@ -20,6 +28,7 @@ import {
   type BattleEvent,
   type GameState,
   type Pos,
+  type RosterMember,
   type Scenario,
   type Unit,
 } from './engine';
@@ -254,11 +263,14 @@ function renderPanel(sel: Unit | undefined): void {
   }
 
   if (sel) {
+    const member = battleCtx && !battleCtx.sandbox && sel.team === 'player' ? world.roster.find((r) => r.id === sel.id) : undefined;
     lines.push(
-      `<div style="margin-top:8px"><b>${sel.name}</b> <span style="opacity:.7">${sel.role}</span><br>` +
+      `<div style="margin-top:8px"><b>${sel.name}</b> <span style="opacity:.7">${sel.role}${member ? ` Lv ${member.level}` : ''}</span><br>` +
         `HP ${sel.hp}/${sel.maxHp} &middot; AP ${sel.ap}/${sel.maxAp} &middot; Ammo ${sel.ammo}/${sel.weapon.clip}<br>` +
         `${sel.weapon.name} ${sel.weapon.damage[0]}-${sel.weapon.damage[1]} dmg, range ${sel.weapon.range}<br>` +
-        `Aim ${sel.aim} &middot; Def ${sel.defense} &middot; Move ${sel.mobility}/${sel.mobility * 2}</div>`,
+        `Aim ${sel.aim} &middot; Def ${sel.defense} &middot; Move ${sel.mobility}/${sel.mobility * 2}` +
+        (member ? memberTags(member) : '') +
+        `</div>`,
     );
   } else if (!state.winner) {
     lines.push(`<div style="margin-top:8px;opacity:.7">Click one of your units (blue) to select.</div>`);
@@ -375,7 +387,8 @@ function restart(nextMap = false): void {
 function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
   mode = 'battle';
   battleCtx = ctx;
-  state = createBattle(scenario);
+  // Real fights field the persistent squad; sandbox battles use the stock one and have no consequences.
+  state = createBattle(ctx.sandbox ? scenario : deployRoster(scenario, world.roster));
   busy = false;
   logIndex = 0;
   logEl.innerHTML = '';
@@ -427,6 +440,7 @@ function enterWorld(): void {
 function finishBattle(): void {
   const ctx = battleCtx;
   if (!ctx || !state.winner || ctx.sandbox) return;
+  const report = applyBattleResult(world.roster, state, world);
   if (state.winner === 'player') {
     if (ctx.site) world.cleared[ctx.site.id] = true;
     world.scrap += ctx.reward;
@@ -439,13 +453,18 @@ function finishBattle(): void {
     world.path = [];
     worldLog(`${ctx.label}: defeat. The squad drags itself back to camp${loss > 0 ? ` and loses ${loss} scrap` : ''}.`);
   }
+  for (const note of report.notes) worldLog(note);
   enterWorld();
 }
 
 function retreat(): void {
   if (busy) return;
   const ctx = battleCtx;
-  if (ctx && !ctx.sandbox && !state.winner) worldLog(`${ctx.label}: you pull back without finishing it.`);
+  if (ctx && !ctx.sandbox && !state.winner) {
+    worldLog(`${ctx.label}: you pull back without finishing it.`);
+    // Wounds and anyone who went down still count; XP and injury recovery do not (see applyBattleResult).
+    for (const note of applyBattleResult(world.roster, state, world).notes) worldLog(note);
+  }
   enterWorld();
 }
 
@@ -489,7 +508,8 @@ function enterSite(site: Site | null): void {
     return;
   }
   if (site.kind === 'home') {
-    worldLog(`${site.name}: ${site.blurb} (Base view is next on the roadmap.)`);
+    const healed = restAtCamp(world.roster);
+    worldLog(`${site.name}: ${healed > 0 ? 'you rest, and everyone is back on their feet.' : 'everyone is already rested.'}`);
     return;
   }
   if (!site.difficulty) {
@@ -509,6 +529,34 @@ function enterSite(site: Site | null): void {
   });
 }
 
+// ---------- squad display (shared by the world and battle panels) ----------
+
+/** Traits and active injuries as extra panel lines. */
+function memberTags(m: RosterMember): string {
+  const traits = m.traits.map((t) => TRAITS[t].name).join(', ');
+  const hurt = m.injuries.map((i) => `${INJURIES[i.id].name} (${i.left} fight${i.left === 1 ? '' : 's'})`).join(', ');
+  return (
+    (traits ? `<br><span style="opacity:.75">${traits}</span>` : '') + (hurt ? `<br><span style="color:#e0674e">${hurt}</span>` : '')
+  );
+}
+
+function rosterHtml(roster: RosterMember[]): string {
+  const rows = roster.map((m) => {
+    const max = effectiveStats(m).hp;
+    const need = xpToNext(m.level);
+    const xp = Number.isFinite(need) ? `XP ${m.xp}/${need}` : 'max level';
+    const hpColor = m.hp >= max ? '#6fcf7a' : m.hp / max > 0.4 ? '#e8b04a' : '#e0674e';
+    return (
+      `<div style="margin-top:4px"><b>${m.name}</b> <span style="opacity:.7">${CLIQUES[m.clique].label} Lv ${m.level}</span><br>` +
+      `<span style="color:${hpColor}">HP ${m.hp}/${max}</span> &middot; ${xp}${memberTags(m)}</div>`
+    );
+  });
+  return `<div style="margin-top:8px;border-top:1px solid #22303c;padding-top:6px"><b>Squad</b>${rows.join('')}</div>`;
+}
+
+const rosterSig = (roster: RosterMember[]): string =>
+  roster.map((m) => [m.hp, m.level, m.xp, m.traits.join(), m.injuries.map((i) => `${i.id}${i.left}`).join()].join(':')).join('|');
+
 // ---------- world panel ----------
 
 let lastWorldSig = '';
@@ -518,7 +566,7 @@ function updateWorldPanel(): void {
   const site = siteNear(world.pos);
   const clearable = WORLD.sites.filter((s) => s.difficulty);
   const done = clearable.filter((s) => world.cleared[s.id]).length;
-  const sig = [region.id, site?.id ?? '-', site ? !!world.cleared[site.id] : '', world.scrap, done].join('|');
+  const sig = [region.id, site?.id ?? '-', site ? !!world.cleared[site.id] : '', world.scrap, done, rosterSig(world.roster)].join('|');
   if (sig === lastWorldSig) return;
   lastWorldSig = sig;
 
@@ -536,6 +584,7 @@ function updateWorldPanel(): void {
         `<span style="opacity:.8">${site.blurb}</span>${hint ? `<br><span style="color:#e8b04a">${hint}</span>` : ''}</div>`,
     );
   }
+  lines.push(rosterHtml(world.roster));
   lines.push(
     `<div style="margin-top:10px;opacity:.55;font-size:11px">WASD / arrows: walk &middot; click map: travel<br>` +
       `E: enter site &middot; G: debug overlay<br>Random fights trigger as you walk outside safe ground.</div>`,

@@ -72,10 +72,12 @@ export function resolveShot(
     damage = randInt(state, attacker.weapon.damage[0], attacker.weapon.damage[1]);
     if (crit) damage = Math.floor(damage * 1.5);
     target.hp = Math.max(0, target.hp - damage);
+    attacker.hits = (attacker.hits ?? 0) + 1;
     if (target.hp === 0) {
       target.alive = false;
       target.overwatch = false;
       killed = true;
+      attacker.kills = (attacker.kills ?? 0) + 1;
     }
   }
 

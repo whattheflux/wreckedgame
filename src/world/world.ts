@@ -1,6 +1,7 @@
 import raw from './worlddata.json';
 import type { Biome } from '../engine/types';
 import { rand } from '../engine/rng';
+import { createStarterRoster, type Roster } from '../engine/roster';
 
 // ---------- data (see worlddata.json; coordinates are pixels in the reference map) ----------
 
@@ -278,6 +279,8 @@ export interface WorldState {
   nextEncounter: number;
   cleared: Record<string, boolean>;
   scrap: number;
+  /** the persistent squad: HP, injuries, XP and traits carry between fights */
+  roster: Roster;
   /** total distance walked (stat) */
   walked: number;
   log: string[];
@@ -292,6 +295,7 @@ export function createWorld(seed: number): WorldState {
     nextEncounter: 0,
     cleared: {},
     scrap: 0,
+    roster: createStarterRoster(),
     walked: 0,
     log: ['You wash ashore. Somewhere on this island are your friends, and some people who are not.'],
   };

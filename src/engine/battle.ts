@@ -12,6 +12,8 @@ export interface UnitSpec {
   x: number;
   y: number;
   hp: number;
+  /** defaults to `hp`; set it lower-than-max `hp` to deploy a wounded unit */
+  maxHp?: number;
   mobility: number;
   aim: number;
   defense: number;
@@ -46,7 +48,7 @@ function spawn(s: UnitSpec): Unit {
     role: s.role,
     pos: { x: s.x, y: s.y },
     hp: s.hp,
-    maxHp: s.hp,
+    maxHp: s.maxHp ?? s.hp,
     ap: 0,
     maxAp: MAX_AP,
     mobility: s.mobility,

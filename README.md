@@ -19,7 +19,7 @@ npm run build    # typecheck + production build
 | --- | --- |
 | `WASD` / arrows | Walk (slides along the coast) |
 | Click the map | Travel there (A* route; clicking the sea snaps to the shore) |
-| `E` | Enter the site you're standing in (assault a hostile site, or visit camp) |
+| `E` | Enter the site you're standing in (assault a hostile site, or rest at camp to heal everyone) |
 | `G` | Debug overlay: walkable area and region circles |
 | `B` / `J` | Sandbox battles on the two hand-built maps |
 
@@ -59,7 +59,20 @@ The painted map in `public/worldmap.png` is the playfield. Everything the code n
 
 **Generated battles** (`encounterScenario`): 30x18, per-biome clutter profile, squad on the left, pods always placed outside sight range (every fight starts with a search, so the contact hint matters), corridors carved if anything ended up walled off, stats and weapons scaled by difficulty.
 
-Defeat sends the squad back to camp minus a quarter of its scrap. There is no HP persistence between fights yet.
+Defeat sends the squad back to camp minus a quarter of its scrap, and everyone who went down comes back injured (see below).
+
+## Squad and progression
+
+Your four friends are a persistent roster (`src/engine/roster.ts`), not a fresh squad each fight.
+
+- **Cliques** (Scout, Jock, Nerd, Drama kid) set level-1 stats, starting weapon and per-level growth. Level-1 stats match the original hand-built squad exactly; a test guards that.
+- **Levelling.** A fight earns 8 XP for taking part, +2 per hit, +12 per kill, +10 for winning. Level *n* needs 40*n* XP; the cap is level 6. A level-up adds the clique's growth and heals the max HP it adds. Levels 2 and 4 grant a random trait (Sure-footed, Eagle-eyed, Tough, Thick-skinned, Jumpy, Showboat), each a flat stat tweak.
+- **HP carries over.** Survivors keep the HP they finished with. Press `E` at camp to restore everyone to full.
+- **Going down isn't dying.** A unit that falls comes back at 1 HP with an injury (twisted ankle, concussion, cracked ribs, shaken up), each a temporary stat penalty. At most two at once; a third replaces whichever is closest to healing.
+- **Injuries heal by fighting.** Every victory or defeat ticks every injury down by one fight. Resting at camp doesn't cure them, and retreating gives no XP and heals nothing, so neither can be farmed.
+- Sandbox battles use the stock squad and change nothing.
+
+Stats are always derived (clique + level + traits + injuries, with floors), never stored, and the roster is plain JSON on `world.roster`, so it will save with the world once saving exists.
 
 ## Finding the enemy
 
@@ -87,6 +100,7 @@ src/engine/   pure game logic, no DOM/rendering. Plain-JSON state (saveable), fu
   ai.ts         enemy decision-making, one action per call so the UI can pace it
   scenarios.ts  weapon table, squad template + hand-built sandbox maps: Beach Landing, Jungle Interior
   encounter.ts  seeded per-biome battle generator used by world encounters and site assaults
+  roster.ts     persistent squad: cliques, levels, traits, injuries; deploy into a battle, fold the result back
 src/world/    the free-roam layer (also pure logic, no DOM, except render.ts)
   worlddata.json  coast, regions, sites for the painted map
   world.ts      walk grid, A* + string-pulling, sliding movement, danger-weighted encounters
@@ -103,9 +117,9 @@ The overworld calls into the battle engine for encounters; base and research wil
 2. [x] Fog of war, dormant enemy pods, scamper, contact hint
 3. [x] Enemy AI: cover-to-cover advance, group cohesion, overwatch ambushes, shoot-and-scoot
 4. [ ] Camera pan/zoom for large maps
-5. [ ] Unit model: clique archetypes, classes, traits, injuries, levelling
+5. [x] Unit model: clique archetypes, traits, injuries, levelling (classes still to do)
 6. [ ] Tech tree as data (spears -> metalwork -> chemistry/gunpowder -> crossbows -> steam -> electricity) gating weapons, armour, buildings
 7. [ ] Base view: building placement + resource loop
 8. [x] Free-roam world map (your painted map) with random encounters and assaultable sites
-9. [ ] Faction territories and missions on the world map; persistent squad HP/injuries
+9. [ ] Faction territories and missions on the world map (persistent squad HP/injuries are done)
 10. [ ] Story layer

@@ -58,6 +58,9 @@ export interface Unit {
   attacked: boolean;
   /** consecutive turns the AI has held position (drives impatience) */
   idleTurns: number;
+  /** shots landed / enemies downed this battle (feeds XP; absent until the first one) */
+  hits?: number;
+  kills?: number;
 }
 
 export type BattleEvent =
