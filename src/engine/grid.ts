@@ -127,12 +127,13 @@ export interface PathNode {
 /** Every tile `self` can reach within maxCost steps (8-way, no corner cutting, units block). Includes the start tile at cost 0. */
 export function reachableTiles(
   map: GameMap,
-  units: Array<Pick<Unit, 'id' | 'pos' | 'alive'>>,
+  units: Array<Pick<Unit, 'id' | 'pos' | 'alive' | 'downed'>>,
   self: Pick<Unit, 'id' | 'pos'>,
   maxCost: number,
 ): Map<string, PathNode> {
   const occupied = new Set<string>();
-  for (const u of units) if (u.alive && u.id !== self.id) occupied.add(posKey(u.pos.x, u.pos.y));
+  // A knocked-down ally is still lying there: nobody can walk onto them (and they can be revived in place).
+  for (const u of units) if ((u.alive || u.downed) && u.id !== self.id) occupied.add(posKey(u.pos.x, u.pos.y));
 
   const out = new Map<string, PathNode>();
   const startKey = posKey(self.pos.x, self.pos.y);

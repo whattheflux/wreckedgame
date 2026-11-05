@@ -66,6 +66,7 @@ export function resolveShot(
   let crit = false;
   let damage = 0;
   let killed = false;
+  let wentDown = false;
 
   if (hit) {
     crit = rand(state) * 100 < preview.critChance;
@@ -77,12 +78,20 @@ export function resolveShot(
       target.alive = false;
       target.overwatch = false;
       killed = true;
-      attacker.kills = (attacker.kills ?? 0) + 1;
+      if (target.protagonist && (target.downs ?? 0) === 0) {
+        // The player character's first fall in a battle is a knock-down, not a death: an ally can revive them.
+        target.downs = 1;
+        target.downed = true;
+        wentDown = true;
+      } else {
+        attacker.kills = (attacker.kills ?? 0) + 1;
+      }
     }
   }
 
   const prefix = overwatch ? 'Overwatch: ' : '';
-  const outcome = hit ? `${crit ? 'CRIT ' : ''}${damage} dmg${killed ? ' - down!' : ''}` : 'miss';
+  const fall = wentDown ? ` - ${target.name} is DOWN, needs a revive!` : ' - down!';
+  const outcome = hit ? `${crit ? 'CRIT ' : ''}${damage} dmg${killed ? fall : ''}` : 'miss';
   state.log.push({
     team: attacker.team,
     text: `${prefix}${attacker.name} (${attacker.weapon.name}) -> ${target.name}: ${outcome} [${preview.hitChance}%]`,
@@ -97,6 +106,7 @@ export function resolveShot(
     crit,
     damage,
     killed,
+    ...(wentDown ? { downed: true } : {}),
     overwatch,
     hitChance: preview.hitChance,
   };

@@ -1,5 +1,7 @@
 import {
+  CLASSES,
   CLIQUES,
+  FIELD_SIZE,
   INJURIES,
   SCENARIOS,
   TRAITS,
@@ -21,6 +23,8 @@ import {
   playerTurnOver,
   reachableFor,
   reload,
+  revivableBy,
+  reviveUnit,
   setOverwatch,
   shoot,
   unitAt,
@@ -28,13 +32,17 @@ import {
   type ActionResult,
   type BattleEvent,
   type GameOver,
+  type Outcome,
   type GameState,
+  type PlayerChoice,
   type Pos,
   type RosterMember,
   type Scenario,
   type Unit,
 } from './engine';
 import { rand } from './engine/rng';
+import { esc, hideOverlay, overlayOpen, showCreate, showPrep, showTitle } from './ui/screens';
+import { clearSave, loadGame, saveGame } from './world/save';
 import { BoardRenderer, type ViewState } from './render/board';
 import { WorldRenderer, type WorldView } from './world/render';
 import {
@@ -65,6 +73,12 @@ const worldSeed = Number(params.get('seed')) || Date.now() & 0x7fffffff;
 type Mode = 'world' | 'battle';
 let mode: Mode = 'world';
 const world = createWorld(worldSeed);
+
+/** Replace the world's contents in place (the rest of the file holds one reference to it). */
+function resetWorld(next: typeof world): void {
+  for (const k of Object.keys(world)) delete (world as unknown as Record<string, unknown>)[k];
+  Object.assign(world, next);
+}
 const worldView: WorldView = { hover: null, debug: false };
 
 /** What the current battle is for, and what happens when it ends. */
@@ -146,6 +160,11 @@ function playEffects(events: BattleEvent[]): void {
       if (first) renderer.addTextEffect(first.pos, 'CONTACT!', '#ffb347', 1800);
       continue;
     }
+    if (ev.type === 'revive') {
+      const t = getUnit(state, ev.targetId);
+      if (t) renderer.addTextEffect(t.pos, 'BACK UP', '#6fcf7a', 1800);
+      continue;
+    }
     if (ev.type !== 'shoot') continue;
     const a = getUnit(state, ev.attackerId);
     const t = getUnit(state, ev.targetId);
@@ -153,6 +172,7 @@ function playEffects(events: BattleEvent[]): void {
     if (!seen(a.pos) && !seen(t.pos)) continue; // happened in the fog
     const text = ev.hit ? `${ev.crit ? 'CRIT ' : ''}-${ev.damage}` : 'MISS';
     renderer.addShotEffect(a.pos, t.pos, ev.hit, text, ev.crit);
+    if (ev.downed) renderer.addTextEffect(t.pos, 'DOWN!', '#e0674e', 2200);
   }
 }
 
@@ -205,6 +225,7 @@ const battleButtons: Btn[] = [
   { label: 'Move (M)', key: 'm', run: () => setAimMode('move'), enabled: (s) => canAct() && !!s && s.ap > 0, active: () => view.mode === 'move' },
   { label: 'Fire (F)', key: 'f', run: () => setAimMode('shoot'), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0, active: () => view.mode === 'shoot' },
   { label: 'Overwatch (O)', key: 'o', run: () => act(setOverwatch(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0 },
+  { label: 'Revive (V)', key: 'v', run: () => reviveAdjacent(), enabled: (s) => canAct() && !!s && s.ap > 0 && revivableBy(state, s).length > 0 },
   { label: 'Reload (R)', key: 'r', run: () => act(reload(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo < s.weapon.clip },
   { label: 'End turn (E)', key: 'e', run: () => startEnemyPhase(), enabled: () => canAct() },
   { label: 'Continue (Enter)', key: 'enter', run: () => finishBattle(), enabled: () => !!state.winner && !busy && !battleCtx?.sandbox },
@@ -220,7 +241,10 @@ const worldButtons: Btn[] = [
   { label: 'Sandbox: Jungle (J)', key: 'j', run: () => startSandbox(1), enabled: () => true },
 ];
 
-const gameOverButtons: Btn[] = [{ label: 'New game (N)', key: 'n', run: () => location.reload(), enabled: () => true }];
+const gameOverButtons: Btn[] = [
+  { label: 'Load last save (L)', key: 'l', run: () => loadLastSave(), enabled: () => !!loadGame() },
+  { label: 'New game (N)', key: 'n', run: () => startNewGame(), enabled: () => true },
+];
 
 // ---------- battle refresh: derive all view data from state ----------
 
@@ -260,6 +284,14 @@ function renderPanel(sel: Unit | undefined): void {
     lines.push(`<div>${side}${busy ? ' (acting...)' : ''}</div>`);
   }
 
+  for (const d of state.units.filter((u) => u.team === 'player' && u.downed && !u.alive)) {
+    lines.push(
+      `<div style="margin-top:8px;padding:6px 8px;border-left:3px solid #e0674e;background:#2a1a1a;color:#e0674e">` +
+        `<b>${esc(d.name)} is down.</b> Move an ally next to ${esc(d.name)} and press V to revive. ` +
+        `Going down again means game over.</div>`,
+    );
+  }
+
   if (view.hint) {
     const h = view.hint;
     lines.push(
@@ -272,7 +304,7 @@ function renderPanel(sel: Unit | undefined): void {
   if (sel) {
     const member = battleCtx && !battleCtx.sandbox && sel.team === 'player' ? world.roster.find((r) => r.id === sel.id) : undefined;
     lines.push(
-      `<div style="margin-top:8px"><b>${sel.name}</b> <span style="opacity:.7">${sel.role}${member ? ` Lv ${member.level}` : ''}</span><br>` +
+      `<div style="margin-top:8px"><b>${esc(sel.name)}</b> <span style="opacity:.7">${sel.role}${member ? ` Lv ${member.level}` : ''}</span><br>` +
         `HP ${sel.hp}/${sel.maxHp} &middot; AP ${sel.ap}/${sel.maxAp} &middot; Ammo ${sel.ammo}/${sel.weapon.clip}<br>` +
         `${sel.weapon.name} ${sel.weapon.damage[0]}-${sel.weapon.damage[1]} dmg, range ${sel.weapon.range}<br>` +
         `Aim ${sel.aim} &middot; Def ${sel.defense} &middot; Move ${sel.mobility}/${sel.mobility * 2}` +
@@ -288,7 +320,7 @@ function renderPanel(sel: Unit | undefined): void {
     const pv = view.preview;
     if (t) {
       lines.push(
-        `<div style="margin-top:8px;border-top:1px solid #22303c;padding-top:6px"><b>${t.name}</b> HP ${t.hp}/${t.maxHp}<br>` +
+        `<div style="margin-top:8px;border-top:1px solid #22303c;padding-top:6px"><b>${esc(t.name)}</b> HP ${t.hp}/${t.maxHp}<br>` +
           (pv.canShoot
             ? `Hit ${pv.hitChance}% &middot; Crit ${pv.critChance}% &middot; ${pv.dmgMin}-${pv.dmgMax} dmg<br>` +
               `Cover: ${pv.cover}${pv.flanked ? ' (FLANKED)' : ''}`
@@ -300,7 +332,7 @@ function renderPanel(sel: Unit | undefined): void {
 
   lines.push(
     `<div style="margin-top:10px;opacity:.55;font-size:11px">Click tile: move &middot; click enemy: shoot<br>` +
-      `M move &middot; F fire &middot; O overwatch &middot; R reload &middot; E end turn &middot; Tab next &middot; W retreat</div>`,
+      `M move &middot; F fire &middot; O overwatch &middot; V revive &middot; R reload &middot; E end turn &middot; Tab next &middot; W retreat</div>`,
   );
   panel.innerHTML = lines.join('');
 }
@@ -311,6 +343,12 @@ function setAimMode(m: 'move' | 'shoot'): void {
 }
 
 // ---------- player actions ----------
+
+function reviveAdjacent(): void {
+  const sel = selected();
+  const target = sel ? revivableBy(state, sel)[0] : undefined;
+  if (sel && target) act(reviveUnit(state, sel.id, target.id));
+}
 
 function act(res: ActionResult): void {
   if (!res.ok) {
@@ -342,6 +380,14 @@ function afterPlayerAction(): void {
 
 function onClick(p: Pos): void {
   if (!canAct()) return;
+  const fallen = state.units.find((u) => u.downed && !u.alive && u.team === 'player' && u.pos.x === p.x && u.pos.y === p.y);
+  const medic = selected();
+  if (fallen && medic) {
+    // Clicking a downed ally while one of your units stands next to them revives them.
+    if (revivableBy(state, medic).includes(fallen)) act(reviveUnit(state, medic.id, fallen.id));
+    else toast(`Move next to ${fallen.name} first.`);
+    return;
+  }
   const clicked = visibleUnitAt(p.x, p.y);
   if (clicked && clicked.team === 'player') {
     select(clicked.id);
@@ -395,7 +441,7 @@ function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
   mode = 'battle';
   battleCtx = ctx;
   // Real fights field the persistent squad; sandbox battles use the stock one and have no consequences.
-  state = createBattle(ctx.sandbox ? scenario : deployRoster(scenario, world.roster));
+  state = createBattle(ctx.sandbox ? scenario : deployRoster(scenario, world.roster, world.squad));
   busy = false;
   logIndex = 0;
   logEl.innerHTML = '';
@@ -410,6 +456,26 @@ function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
   if (first) view.selectedId = first.id;
   toast(ctx.label);
   refresh();
+}
+
+/** Assaults let you pick who goes (when there is a choice to make); ambushes just use the last squad. */
+function beginAssault(scenario: Scenario, ctx: BattleCtx): void {
+  const living = world.roster.filter((m) => !m.dead);
+  if (ctx.sandbox || living.length <= FIELD_SIZE) {
+    beginBattle(scenario, ctx);
+    return;
+  }
+  showPrep(
+    ctx.label,
+    world.roster,
+    world.squad,
+    (ids) => {
+      world.squad = ids;
+      hideOverlay();
+      beginBattle(scenario, ctx);
+    },
+    hideOverlay,
+  );
 }
 
 function startSandbox(i: number): void {
@@ -441,19 +507,26 @@ function enterWorld(): void {
   setButtons(over ? gameOverButtons : worldButtons);
   lastWorldSig = '';
   updateWorldPanel();
+  // Autosave on every return to the map. Never after game over: the save stays the last good state, so "Load last save" is a real undo.
+  if (started && !over) saveGame(world);
 }
 
-/** The run ends if the protagonist has fallen or nobody is left. Logs it and returns true the moment that happens. */
-function checkGameOver(): boolean {
-  if (over) return true;
-  over = gameOverReason(world.roster);
-  if (!over) return false;
+/** Why the run ended, for the log and the game-over panel. */
+const overText = (reason: GameOver): string => {
   const leader = world.roster.find((m) => m.protagonist)?.name ?? 'The leader';
-  worldLog(over === 'protagonist-fell' ? `${leader} didn't make it. Game over.` : 'Nobody is left standing. Game over.');
+  return reason === 'protagonist-fell' ? `${leader} didn't make it.` : 'The whole squad was wiped out.';
+};
+
+/** The run ends if the leader is dead or the squad was wiped. Logs it and returns true the moment that happens. */
+function checkGameOver(outcome?: Outcome): boolean {
+  if (over) return true;
+  over = gameOverReason(world.roster, outcome);
+  if (!over) return false;
+  worldLog(`${overText(over)} Game over.`);
   return true;
 }
 
-/** Return from a finished fight: rewards on victory, back to camp (minus some scrap) on defeat. */
+/** Return from a finished fight: rewards on victory; a defeat is a wipe, which ends the run. */
 function finishBattle(): void {
   const ctx = battleCtx;
   if (!ctx || !state.winner || ctx.sandbox) return;
@@ -462,19 +535,11 @@ function finishBattle(): void {
     if (ctx.site) world.cleared[ctx.site.id] = true;
     world.scrap += ctx.reward;
     worldLog(`${ctx.label}: victory. +${ctx.reward} scrap.`);
-  } else if (gameOverReason(world.roster)) {
-    worldLog(`${ctx.label}: defeat.`); // a wipe: nobody left to drag themselves home
   } else {
-    // Only reachable if something spared the downed (see fateOfDowned): the survivors retreat to camp.
-    const loss = Math.floor(world.scrap / 4);
-    world.scrap -= loss;
-    const camp = siteById('camp');
-    if (camp) world.pos = { x: camp.x, y: camp.y };
-    world.path = [];
-    worldLog(`${ctx.label}: defeat. The squad drags itself back to camp${loss > 0 ? ` and loses ${loss} scrap` : ''}.`);
+    worldLog(`${ctx.label}: defeat.`);
   }
   for (const note of report.notes) worldLog(note);
-  checkGameOver();
+  checkGameOver(report.outcome);
   enterWorld();
 }
 
@@ -543,7 +608,7 @@ function enterSite(site: Site | null): void {
     return;
   }
   worldLog(`${site.name}: ${site.blurb}`);
-  beginBattle(siteScenario(site), {
+  beginAssault(siteScenario(site), {
     label: `Assault on ${site.name}`,
     site,
     reward: site.reward ?? 0,
@@ -566,7 +631,7 @@ function rosterHtml(roster: RosterMember[]): string {
   const rows = roster.map((m) => {
     if (m.dead) {
       return (
-        `<div style="margin-top:4px;opacity:.6"><b>${m.name}</b> <span style="opacity:.7">${CLIQUES[m.clique].label} Lv ${m.level}</span> ` +
+        `<div style="margin-top:4px;opacity:.6"><b>${esc(m.name)}</b> <span style="opacity:.7">${CLIQUES[m.clique].label} / ${CLASSES[m.schoolClass].label} Lv ${m.level}</span> ` +
         `&mdash; <span style="color:#e0674e">fallen</span></div>`
       );
     }
@@ -575,7 +640,7 @@ function rosterHtml(roster: RosterMember[]): string {
     const xp = Number.isFinite(need) ? `XP ${m.xp}/${need}` : 'max level';
     const hpColor = m.hp >= max ? '#6fcf7a' : m.hp / max > 0.4 ? '#e8b04a' : '#e0674e';
     return (
-      `<div style="margin-top:4px"><b>${m.name}</b> <span style="opacity:.7">${CLIQUES[m.clique].label} Lv ${m.level}</span><br>` +
+      `<div style="margin-top:4px"><b>${esc(m.name)}${m.protagonist ? ' (you)' : ''}</b> <span style="opacity:.7">${CLIQUES[m.clique].label} / ${CLASSES[m.schoolClass].label} Lv ${m.level}</span><br>` +
       `<span style="color:${hpColor}">HP ${m.hp}/${max}</span> &middot; ${xp}${memberTags(m)}</div>`
     );
   });
@@ -599,8 +664,7 @@ function updateWorldPanel(): void {
   lastWorldSig = sig;
 
   if (over) {
-    const leader = world.roster.find((m) => m.protagonist)?.name ?? 'The leader';
-    const why = over === 'protagonist-fell' ? `${leader} didn't make it.` : 'Nobody is left standing.';
+    const why = overText(over) + (loadGame() ? '<br><span style="opacity:.8">Press L to load your last save.</span>' : '');
     panel.innerHTML =
       `<h2>The Island</h2>` +
       `<div style="margin-top:8px;padding:6px 8px;border-left:3px solid #e0674e;background:#2a1a1a;color:#e0674e"><b>GAME OVER</b><br>${why}</div>` +
@@ -692,7 +756,7 @@ worldCanvas.addEventListener('click', (e) => {
 window.addEventListener('blur', () => heldKeys.clear());
 window.addEventListener('keyup', (e) => heldKeys.delete(e.key.toLowerCase()));
 window.addEventListener('keydown', (e) => {
-  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (overlayOpen() || e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
 
   if (mode === 'world') {
@@ -723,16 +787,46 @@ window.addEventListener('keydown', (e) => {
   if (b && b.enabled(selected())) b.run();
 });
 
-// ---------- boot ----------
+// ---------- new game / load / boot ----------
 
-enterWorld();
+/** False until the player has chosen Continue or New game; keeps the placeholder world from overwriting a real save. */
+let started = false;
+
+function startNewGame(): void {
+  showCreate((choice: PlayerChoice) => {
+    resetWorld(createWorld(Date.now() & 0x7fffffff, choice));
+    over = null;
+    started = true;
+    hideOverlay();
+    enterWorld();
+  });
+}
+
+function loadLastSave(): void {
+  const saved = loadGame();
+  if (!saved) return;
+  resetWorld(saved);
+  over = null;
+  started = true;
+  hideOverlay();
+  enterWorld();
+}
+
+if (params.has('quick')) {
+  // Straight into the default character, no screens (dev and scripted runs).
+  started = true;
+  enterWorld();
+} else {
+  enterWorld();
+  showTitle({ canContinue: !!loadGame(), onContinue: loadLastSave, onNew: startNewGame });
+}
 
 let lastFrame = performance.now();
 function frame(now: number): void {
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
   if (mode === 'world') {
-    const ev = over ? null : stepWorld(world, dt, heldInput());
+    const ev = over || overlayOpen() ? null : stepWorld(world, dt, heldInput());
     if (ev) randomEncounter(ev.region);
     else {
       updateWorldPanel();
@@ -760,6 +854,7 @@ if (params.has('debug')) {
         return over;
       },
       enterSite: (id: string) => enterSite(siteById(id) ?? null),
+      clearSave,
       encounter: () => randomEncounter(regionAt(world.pos)),
       finish: () => finishBattle(),
     },

@@ -22,6 +22,7 @@ npm run build    # typecheck + production build
 | `E` | Enter the site you're standing in (assault a hostile site, or rest at camp to heal everyone) |
 | `G` | Debug overlay: walkable area and region circles |
 | `B` / `J` | Sandbox battles on the two hand-built maps |
+| `L` | On the game-over screen: load the last autosave |
 
 ### Battle
 
@@ -32,10 +33,11 @@ npm run build    # typecheck + production build
 | Click yellow tile | Dash (2 AP) |
 | Click enemy | Shoot (1 AP, 1 ammo) |
 | `O` | Overwatch (uses remaining AP; reaction shot at -15 aim on the first enemy that moves into sight) |
+| `V` | Revive a knocked-down ally standing next to the selected unit (1 AP); clicking the downed unit does the same |
 | `R` | Reload (1 AP) |
 | `E` | End turn |
 | `W` | Retreat to the world map |
-| `Enter` | After the fight: return to the world (rewards on victory, back to camp on defeat) |
+| `Enter` | After the fight: return to the world (a defeat is a squad wipe and ends the run) |
 | `N` / `X` | Restart / next map (sandbox battles only) |
 
 ## Combat rules
@@ -59,18 +61,20 @@ The painted map in `public/worldmap.png` is the playfield. Everything the code n
 
 **Generated battles** (`encounterScenario`): 30x18, per-biome clutter profile, squad on the left, pods always placed outside sight range (every fight starts with a search, so the contact hint matters), corridors carved if anything ended up walled off, stats and weapons scaled by difficulty.
 
-Permadeath is on: anyone who goes down in a fight is gone for good, so a defeat (everyone down) ends the run (see below).
+Permadeath is on: anyone who goes down in a fight is gone for good, except the player character's first fall in a fight (see below).
 
 ## Squad and progression
 
-Your four friends are a persistent roster (`src/engine/roster.ts`), not a fresh squad each fight.
+You and your friends are a persistent roster (`src/engine/roster.ts`), not a fresh squad each fight.
 
-- **The squad.** Amy (Popular, the player character), Scott (Jock), Tyson (Nerd) and Anna (Drama kid). Cliques set level-1 stats, starting weapon and per-level growth. Level-1 stats match the original hand-built squad exactly; a test guards that.
-- **Levelling.** A fight earns 8 XP for taking part, +2 per hit, +12 per kill, +10 for winning. Level *n* needs 40*n* XP; the cap is level 6. A level-up adds the clique's growth and heals the max HP it adds. Levels 2 and 4 grant a random trait (Sure-footed, Eagle-eyed, Tough, Thick-skinned, Jumpy, Showboat), each a flat stat tweak.
+- **You.** A new game starts with character creation: a name, a **clique** (Popular, Jock, Nerd, Drama kid, Weirdo, Stoner) and a **school class** (Sport, Science, Drama, Art, Home Ec, Woodwork, Metalwork). Any combination is allowed. The clique sets the stat line and growth; the class nudges the stats and decides the starting weapon. Four companions join you: Amy (Popular / Home Ec), Scott (Jock / Sport), Tyson (Nerd / Science), Anna (Drama kid / Drama). The roster holds at most 5.
+- **Picking the squad.** Four take the field. Before each site assault you choose who goes (you always do); ambushes use your last pick. If you have four or fewer living, nobody is left out and there is no screen.
+- **Levelling.** A fight earns 8 XP for taking part, +2 per hit, +12 per kill, +10 for winning. Level *n* needs 40*n* XP; the cap is level 6. A level-up adds the clique's and class's growth and heals the max HP it adds. Levels 2 and 4 grant a random trait (Sure-footed, Eagle-eyed, Tough, Thick-skinned, Jumpy, Showboat), each a flat stat tweak.
 - **HP carries over.** Survivors keep the HP they finished with. Press `E` at camp to restore everyone to full.
-- **Permadeath.** A unit that goes down in a fight is dead for good, including if you retreat afterwards (it fell before you pulled out). The fallen stay on the squad panel as a reminder and never deploy again, so retreating is how you save the survivors.
-- **Game over.** The run ends when Amy falls, or when nobody is left. Play stops and only "New game" works.
-- **Softening it later.** `fateOfDowned` (in `roster.ts`) is the one place that decides what going down costs. A future skill, item or story beat can return `'injured'` for a given unit and it will come back at 1 HP with a serious injury instead (twisted ankle, concussion, cracked ribs, shaken up: each a temporary stat penalty, at most two at once). That machinery is built and tested but nothing triggers it yet.
+- **Going down.** Everyone else who goes down is dead for good, including if you retreat afterwards (it fell before you pulled out). *You* get one free fall per fight: you are knocked down, not killed. A downed player character is ignored by the enemy and blocks the tile; an adjacent ally can spend 1 AP to revive you at 40% HP (with no AP that turn). Any fall leaves you with a serious injury after the fight. Falling a **second** time in the same fight is death and ends the run at once.
+- **Game over.** The run ends when you are dead (second fall), or when the whole squad is wiped (a defeat). Play stops; press `L` to load the last autosave, or start a new game.
+- **Saving.** The game autosaves to the browser every time you return to the map, and never after a game over, so the save is always the last good state and reloading is a real undo. `Continue` on the title screen picks it up. Dev: `?quick` skips the title and creation screens.
+- **Softening permadeath later.** `fateOfDowned` (in `roster.ts`) is the one place that decides what going down costs. A future skill, item or story beat can return `'injured'` for a given unit and it will come back at 1 HP with a serious injury instead (twisted ankle, concussion, cracked ribs, shaken up: each a temporary stat penalty, at most two at once).
 - **Injuries heal by fighting.** Every victory or defeat ticks every injury down by one fight. Resting at camp doesn't cure them, and retreating gives no XP and heals nothing, so neither can be farmed.
 - Sandbox battles use the stock squad and change nothing.
 
@@ -78,7 +82,7 @@ Your four friends are a persistent roster (`src/engine/roster.ts`), not a fresh 
 
 Drop `amy.png`, `scott.png`, `tyson.png`, `anna.png` (lowercase unit name, PNG or WebP) into `src/assets/sprites/` and that unit is drawn with it on the battle board instead of a coloured circle. No code change needed; units without a file keep their circle. The spec is in `src/assets/sprites/README.md`.
 
-Stats are always derived (clique + level + traits + injuries, with floors), never stored, and the roster is plain JSON on `world.roster`, so it will save with the world once saving exists.
+Stats are always derived (clique + class + level + traits + injuries, with floors), never stored, and the roster is plain JSON on `world.roster`, which is what the autosave stores.
 
 ## Finding the enemy
 
@@ -106,13 +110,15 @@ src/engine/   pure game logic, no DOM/rendering. Plain-JSON state (saveable), fu
   ai.ts         enemy decision-making, one action per call so the UI can pace it
   scenarios.ts  weapon table, squad template + hand-built sandbox maps: Beach Landing, Jungle Interior
   encounter.ts  seeded per-biome battle generator used by world encounters and site assaults
-  roster.ts     persistent squad: cliques, levels, traits, injuries; deploy into a battle, fold the result back
+  roster.ts     persistent squad: cliques x classes, levels, traits, injuries; squad pick, deploy into a battle, fold the result back
 src/world/    the free-roam layer (also pure logic, no DOM, except render.ts)
   worlddata.json  coast, regions, sites for the painted map
   world.ts      walk grid, A* + string-pulling, sliding movement, danger-weighted encounters
   render.ts     draws the map, sites, party, route
+  save.ts       autosave to localStorage (validated, versioned, safe when storage is unavailable)
 src/render/   canvas board renderer (terrain, fog, overlays, hint arrow, effects, optional character sprites)
 src/assets/sprites/   drop-in character art, picked up automatically by name
+src/ui/       full-stage screens: title, character creation, squad pick
 src/main.ts   mode switch (world <-> battle), input, panels, log, enemy-phase pacing
 ```
 
@@ -124,7 +130,7 @@ The overworld calls into the battle engine for encounters; base and research wil
 2. [x] Fog of war, dormant enemy pods, scamper, contact hint
 3. [x] Enemy AI: cover-to-cover advance, group cohesion, overwatch ambushes, shoot-and-scoot
 4. [ ] Camera pan/zoom for large maps
-5. [x] Unit model: clique archetypes, traits, injuries, levelling (classes still to do)
+5. [x] Unit model: clique x class, traits, injuries, levelling, squad pick, knock-down/revive, autosave (class abilities still to do)
 6. [ ] Tech tree as data (spears -> metalwork -> chemistry/gunpowder -> crossbows -> steam -> electricity) gating weapons, armour, buildings
 7. [ ] Base view: building placement + resource loop
 8. [x] Free-roam world map (your painted map) with random encounters and assaultable sites

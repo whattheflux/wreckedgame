@@ -25,11 +25,28 @@
       #log .enemy { color: #e07a6b; }
       #log .player { color: #7ec4e8; }
       #log .sys { color: #8a9aa8; }
+      #overlay { position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; background: rgba(8, 13, 18, 0.92); padding: 24px 16px; box-sizing: border-box; }
+      #overlay[hidden] { display: none; }
+      #overlay .card { width: 100%; max-width: 640px; margin: auto 0; }
+      #overlay h1 { margin: 0 0 4px; font-size: 24px; }
+      #overlay h3 { margin: 16px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.7; }
+      #overlay .sub { margin: 0 0 14px; opacity: 0.75; font-size: 14px; }
+      #overlay .field { display: block; font-size: 13px; margin-bottom: 4px; }
+      #overlay input { background: #0e1720; color: #d7e0e8; border: 1px solid #2f4352; border-radius: 4px; padding: 6px 8px; font-size: 14px; margin-left: 6px; }
+      #overlay .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+      #overlay .choice { text-align: left; display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; font-size: 12px; }
+      #overlay .choice b { font-size: 13px; }
+      #overlay .choice span { opacity: 0.75; }
+      #overlay .choice.selected { border-color: #e8b04a; background: #2a2a1e; }
+      #overlay .bad { color: #e0674e; opacity: 1 !important; }
+      #overlay .preview { margin-top: 14px; padding: 8px 10px; border-left: 3px solid #7ec4e8; background: #1a2530; font-size: 13px; line-height: 1.5; }
+      #overlay .row { display: flex; gap: 8px; margin-top: 16px; }
+      #overlay button.primary { background: #2b5a3a; border-color: #4a8a5c; font-size: 14px; padding: 8px 16px; }
     </style>
   </head>
   <body>
     <div id="app">
-      <div id="stage"><canvas id="board" hidden></canvas><canvas id="world"></canvas></div>
+      <div id="stage"><canvas id="board" hidden></canvas><canvas id="world"></canvas><div id="overlay" hidden></div></div>
       <div id="side">
         <div id="panel"></div>
         <div id="actions"></div>

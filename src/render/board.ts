@@ -148,6 +148,7 @@ export class BoardRenderer {
     this.drawFog(state, view);
     this.drawOverlays(state, view);
     this.drawShotLine(state, view);
+    for (const u of state.units) if (u.downed && !u.alive) this.drawDowned(u, state);
     for (const u of state.units) if (u.alive && this.canSee(u, view)) this.drawUnit(u, state, view);
     this.drawPreviewLabel(state, view);
     this.drawEffects();
@@ -328,6 +329,33 @@ export class BoardRenderer {
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
     ctx.setLineDash([]);
+  }
+
+  /** A knocked-down unit: a grey, crossed-out marker that still occupies its tile (an ally can revive it). */
+  private drawDowned(u: Unit, state: GameState): void {
+    const { ctx, tile } = this;
+    const c = this.center(u.pos);
+    const r = tile * 0.34;
+    const pulse = state.active === 'player' ? 0.75 + 0.25 * Math.sin(performance.now() / 250) : 0.75;
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = '#4b5864';
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#e0674e';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(c.x - r * 0.6, c.y - r * 0.6);
+    ctx.lineTo(c.x + r * 0.6, c.y + r * 0.6);
+    ctx.moveTo(c.x + r * 0.6, c.y - r * 0.6);
+    ctx.lineTo(c.x - r * 0.6, c.y + r * 0.6);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#e0674e';
+    ctx.font = `bold ${Math.round(tile * 0.24)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('DOWN', c.x, c.y - r - 5);
   }
 
   private drawUnit(u: Unit, state: GameState, view: ViewState): void {

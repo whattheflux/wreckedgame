@@ -21,6 +21,8 @@ export interface UnitSpec {
   weapon: Weapon;
   /** enemies sharing a pod id start dormant together and wake together */
   pod?: string;
+  /** the player character: one knock-down per battle instead of dying (see resolveShot) */
+  protagonist?: boolean;
 }
 
 export interface Scenario {
@@ -63,6 +65,7 @@ function spawn(s: UnitSpec): Unit {
     dormant: s.team === 'enemy' && s.pod !== undefined,
     attacked: false,
     idleTurns: 0,
+    ...(s.protagonist ? { protagonist: true } : {}),
   };
 }
 
@@ -126,13 +129,16 @@ export const playerTurnOver = (state: GameState): boolean => living(state, 'play
 
 function checkWin(state: GameState, events: BattleEvent[]): void {
   if (state.winner) return;
+  // The player character falling for good (a second fall in one battle) ends it on the spot.
+  const leaderLost = state.units.find((u) => u.team === 'player' && u.protagonist && !u.alive && !u.downed);
   let winner: Team | null = null;
   if (living(state, 'enemy').length === 0) winner = 'player';
-  else if (living(state, 'player').length === 0) winner = 'enemy';
+  else if (living(state, 'player').length === 0 || leaderLost) winner = 'enemy';
   if (!winner) return;
   state.winner = winner;
   events.push({ type: 'end', winner });
-  state.log.push({ team: 'sys', text: winner === 'player' ? 'Rival faction routed. Victory!' : 'Your squad is down. Defeat.' });
+  const defeat = leaderLost ? `${leaderLost.name} is down for good. Defeat.` : 'Your squad is down. Defeat.';
+  state.log.push({ team: 'sys', text: winner === 'player' ? 'Rival faction routed. Victory!' : defeat });
 }
 
 function validateActor(state: GameState, id: string, minAp = 1): { unit: Unit } | { error: string } {
@@ -299,4 +305,32 @@ export function reload(state: GameState, id: string): ActionResult {
   unit.ammo = unit.weapon.clip;
   state.log.push({ team: unit.team, text: `${unit.name} reloads ${unit.weapon.name}.`, at: [{ ...unit.pos }] });
   return { ok: true, events: [{ type: 'reload', unitId: unit.id }] };
+}
+
+/** Fraction of max HP a revived unit comes back with. */
+export const REVIVE_HP_FRACTION = 0.4;
+
+const adjacent = (a: Pos, b: Pos): boolean => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) <= 1;
+
+/** Knocked-down allies lying next to `unit`: the only ones it can revive. */
+export const revivableBy = (state: GameState, unit: Unit): Unit[] =>
+  state.units.filter((t) => t.downed && !t.alive && t.team === unit.team && adjacent(unit.pos, t.pos));
+
+/** Spend 1 AP to get an adjacent knocked-down ally back up. They return at REVIVE_HP_FRACTION of max HP, with no AP this turn. */
+export function reviveUnit(state: GameState, id: string, targetId: string): ActionResult {
+  const v = validateActor(state, id);
+  if ('error' in v) return fail(v.error);
+  const unit = v.unit;
+  const target = getUnit(state, targetId);
+  if (!target || !target.downed || target.alive || target.team !== unit.team) return fail('Nobody to revive');
+  if (!adjacent(unit.pos, target.pos)) return fail('Too far away');
+
+  unit.ap -= 1;
+  target.alive = true;
+  target.downed = false;
+  target.hp = Math.max(1, Math.ceil(target.maxHp * REVIVE_HP_FRACTION));
+  target.ap = 0;
+  target.overwatch = false;
+  state.log.push({ team: unit.team, text: `${unit.name} gets ${target.name} back on their feet.`, at: [{ ...unit.pos }, { ...target.pos }] });
+  return { ok: true, events: [{ type: 'revive', unitId: unit.id, targetId: target.id }] };
 }

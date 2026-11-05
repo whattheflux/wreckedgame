@@ -61,6 +61,12 @@ export interface Unit {
   /** shots landed / enemies downed this battle (feeds XP; absent until the first one) */
   hits?: number;
   kills?: number;
+  /** the player character: their first fall in a battle is a knock-down, not a death (see resolveShot) */
+  protagonist?: boolean;
+  /** knocked down but not dead: out of the fight (alive is false) until an adjacent ally revives them */
+  downed?: boolean;
+  /** how many times this unit has gone down this battle */
+  downs?: number;
 }
 
 export type BattleEvent =
@@ -73,9 +79,12 @@ export type BattleEvent =
       crit: boolean;
       damage: number;
       killed: boolean;
+      /** the target was knocked down rather than killed (so `killed` is true but they can be revived) */
+      downed?: boolean;
       overwatch: boolean;
       hitChance: number;
     }
+  | { type: 'revive'; unitId: string; targetId: string }
   | { type: 'overwatch'; unitId: string }
   | { type: 'reload'; unitId: string }
   | { type: 'reveal'; podId: string; unitIds: string[] }

@@ -14,7 +14,10 @@ import { rand, type RngHolder } from './rng';
 
 // ---------- data tables ----------
 
-export type Clique = 'popular' | 'jock' | 'nerd' | 'drama';
+/** Who you are: the social group. Sets the stat line and growth. */
+export type Clique = 'popular' | 'jock' | 'nerd' | 'drama' | 'weirdo' | 'stoner';
+/** What you studied: the school specialty. Sets the weapon and nudges stats; abilities and tech-tree branches hang off it later. */
+export type SchoolClass = 'sport' | 'science' | 'drama' | 'art' | 'homeec' | 'woodwork' | 'metalwork';
 export type WeaponId = keyof typeof WEAPONS;
 
 export interface StatBlock {
@@ -27,20 +30,43 @@ export interface StatBlock {
 
 export interface CliqueDef {
   label: string;
+  blurb: string;
   /** level-1 stats */
   base: StatBlock;
-  weapon: WeaponId;
   /** flat gain per level after the first */
   growth: Omit<StatBlock, 'mobility'>;
   /** +1 mobility every N levels; 0 = never */
   mobilityEvery: number;
 }
 
+/** Each clique has a strength and a weakness, so no combination with a class is a trap. */
 export const CLIQUES: Record<Clique, CliqueDef> = {
-  popular: { label: 'Popular', base: { hp: 10, mobility: 6, aim: 72, defense: 10, crit: 10 }, weapon: 'slingshot', growth: { hp: 1, aim: 2, defense: 1, crit: 1 }, mobilityEvery: 3 },
-  jock: { label: 'Jock', base: { hp: 14, mobility: 5, aim: 62, defense: 0, crit: 5 }, weapon: 'javelin', growth: { hp: 2, aim: 1, defense: 0, crit: 1 }, mobilityEvery: 0 },
-  nerd: { label: 'Nerd', base: { hp: 9, mobility: 5, aim: 75, defense: 0, crit: 5 }, weapon: 'flareGun', growth: { hp: 1, aim: 2, defense: 0, crit: 1 }, mobilityEvery: 0 },
-  drama: { label: 'Drama kid', base: { hp: 11, mobility: 5, aim: 66, defense: 5, crit: 10 }, weapon: 'slingshot', growth: { hp: 1, aim: 1, defense: 1, crit: 2 }, mobilityEvery: 0 },
+  popular: { label: 'Popular', blurb: 'Everyone knows them. Quick and hard to hit, but fragile.', base: { hp: 10, mobility: 6, aim: 72, defense: 10, crit: 10 }, growth: { hp: 1, aim: 2, defense: 1, crit: 1 }, mobilityEvery: 3 },
+  jock: { label: 'Jock', blurb: 'Built to take a hit, but easy to hit back.', base: { hp: 14, mobility: 5, aim: 62, defense: 0, crit: 5 }, growth: { hp: 2, aim: 1, defense: 0, crit: 1 }, mobilityEvery: 0 },
+  nerd: { label: 'Nerd', blurb: 'Hits what they aim at, but folds when hit.', base: { hp: 9, mobility: 5, aim: 75, defense: 0, crit: 5 }, growth: { hp: 1, aim: 2, defense: 0, crit: 1 }, mobilityEvery: 0 },
+  drama: { label: 'Drama kid', blurb: 'Lives for the big moment. Lucky crits, middling nerve.', base: { hp: 11, mobility: 5, aim: 66, defense: 5, crit: 10 }, growth: { hp: 1, aim: 1, defense: 1, crit: 2 }, mobilityEvery: 0 },
+  weirdo: { label: 'Weirdo', blurb: 'Unpredictable. Huge crits, shaky everything else.', base: { hp: 10, mobility: 5, aim: 66, defense: 5, crit: 15 }, growth: { hp: 1, aim: 1, defense: 0, crit: 2 }, mobilityEvery: 0 },
+  stoner: { label: 'Stoner', blurb: 'Unbothered. Sturdy and hard to rattle, slow and a poor shot.', base: { hp: 12, mobility: 4, aim: 60, defense: 10, crit: 8 }, growth: { hp: 2, aim: 1, defense: 1, crit: 1 }, mobilityEvery: 0 },
+};
+
+export interface ClassDef {
+  label: string;
+  blurb: string;
+  weapon: WeaponId;
+  /** added to the clique's level-1 stats */
+  base: Partial<StatBlock>;
+  /** added to the clique's per-level growth */
+  growth: Partial<Omit<StatBlock, 'mobility'>>;
+}
+
+export const CLASSES: Record<SchoolClass, ClassDef> = {
+  sport: { label: 'Sport', blurb: 'Athletic and quick on their feet. Throws a javelin.', weapon: 'javelin', base: { hp: 2, mobility: 1 }, growth: { hp: 1 } },
+  science: { label: 'Science', blurb: 'Careful and precise. Fires flares.', weapon: 'flareGun', base: { aim: 3 }, growth: { aim: 1 } },
+  drama: { label: 'Drama', blurb: 'Stagecraft and nerve. Slingshot.', weapon: 'slingshot', base: { defense: 3, crit: 3 }, growth: { crit: 1 } },
+  art: { label: 'Art', blurb: 'A good eye for a target. Slingshot.', weapon: 'slingshot', base: { aim: 2, crit: 4 }, growth: { aim: 1 } },
+  homeec: { label: 'Home Ec', blurb: 'Patches people up. Slingshot.', weapon: 'slingshot', base: { hp: 1, defense: 2 }, growth: { hp: 1, defense: 1 } },
+  woodwork: { label: 'Woodwork', blurb: 'Handy with a sharpened pole.', weapon: 'pole', base: { hp: 1, aim: 2 }, growth: { hp: 1, aim: 1 } },
+  metalwork: { label: 'Metalwork', blurb: 'Sturdy and heavy-handed, but slow. Sharpened pole.', weapon: 'pole', base: { hp: 3, defense: 3, mobility: -1 }, growth: { hp: 1, defense: 1 } },
 };
 
 export type TraitId = 'sure-footed' | 'eagle-eyed' | 'tough' | 'thick-skinned' | 'jumpy' | 'showboat';
@@ -105,6 +131,7 @@ export interface RosterMember {
   id: string;
   name: string;
   clique: Clique;
+  schoolClass: SchoolClass;
   level: number;
   /** progress toward the next level */
   xp: number;
@@ -121,23 +148,39 @@ export interface RosterMember {
 
 export type Roster = RosterMember[];
 
-const STARTERS: Array<{ id: string; name: string; clique: Clique; protagonist?: boolean }> = [
-  { id: 'p1', name: 'Amy', clique: 'popular', protagonist: true },
-  { id: 'p2', name: 'Scott', clique: 'jock' },
-  { id: 'p3', name: 'Tyson', clique: 'nerd' },
-  { id: 'p4', name: 'Anna', clique: 'drama' },
+/** Most members you can have, and how many take the field in one fight. */
+export const MAX_ROSTER = 5;
+export const FIELD_SIZE = 4;
+
+export const PLAYER_ID = 'pc';
+
+export interface PlayerChoice {
+  name: string;
+  clique: Clique;
+  schoolClass: SchoolClass;
+}
+
+export const DEFAULT_PLAYER: PlayerChoice = { name: 'You', clique: 'popular', schoolClass: 'sport' };
+
+/** The friends who start with you. Clique and class are independent, so these are just their starting picks. */
+const COMPANIONS: Array<{ id: string; name: string; clique: Clique; schoolClass: SchoolClass }> = [
+  { id: 'p1', name: 'Amy', clique: 'popular', schoolClass: 'homeec' },
+  { id: 'p2', name: 'Scott', clique: 'jock', schoolClass: 'sport' },
+  { id: 'p3', name: 'Tyson', clique: 'nerd', schoolClass: 'science' },
+  { id: 'p4', name: 'Anna', clique: 'drama', schoolClass: 'drama' },
 ];
 
-export function newMember(id: string, name: string, clique: Clique, protagonist = false): RosterMember {
+export function newMember(id: string, name: string, clique: Clique, schoolClass: SchoolClass, protagonist = false): RosterMember {
   const m: RosterMember = {
     id,
     name,
     clique,
+    schoolClass,
     level: 1,
     xp: 0,
     traits: [],
     injuries: [],
-    weapon: CLIQUES[clique].weapon,
+    weapon: CLASSES[schoolClass].weapon,
     hp: 1,
     dead: false,
     protagonist,
@@ -146,39 +189,60 @@ export function newMember(id: string, name: string, clique: Clique, protagonist 
   return m;
 }
 
-/** The four friends you start with: level 1, no traits, full health. Amy is the player character. */
-export function createStarterRoster(): Roster {
-  return STARTERS.map((s) => newMember(s.id, s.name, s.clique, s.protagonist ?? false));
+/** The player character plus the four friends: level 1, no traits, full health. */
+export function createStarterRoster(player: PlayerChoice = DEFAULT_PLAYER): Roster {
+  const name = player.name.trim().slice(0, 16) || DEFAULT_PLAYER.name;
+  return [newMember(PLAYER_ID, name, player.clique, player.schoolClass, true), ...COMPANIONS.map((c) => newMember(c.id, c.name, c.clique, c.schoolClass))];
 }
 
 export const livingSquad = (roster: Roster): Roster => roster.filter((m) => !m.dead);
 
+/**
+ * Who takes the field: the player character always, then the preferred ids in order (living only,
+ * duplicates ignored), then anyone else living in roster order, up to FIELD_SIZE.
+ */
+export function chooseSquad(roster: Roster, preferred: readonly string[] = []): string[] {
+  const living = livingSquad(roster);
+  const out: string[] = [];
+  const add = (id: string): void => {
+    if (out.length < FIELD_SIZE && !out.includes(id) && living.some((m) => m.id === id)) out.push(id);
+  };
+  for (const m of living) if (m.protagonist) add(m.id);
+  preferred.forEach(add);
+  living.forEach((m) => add(m.id));
+  return out;
+}
+
 export type GameOver = 'protagonist-fell' | 'squad-lost';
 
-/** The run ends when the player character falls, or when nobody is left. */
-export function gameOverReason(roster: Roster): GameOver | null {
+/**
+ * The run ends when the player character is dead (a second fall in one fight), or when the whole
+ * squad is wiped (a defeat, or nobody left alive).
+ */
+export function gameOverReason(roster: Roster, outcome?: Outcome): GameOver | null {
   if (roster.some((m) => m.protagonist && m.dead)) return 'protagonist-fell';
-  if (roster.every((m) => m.dead)) return 'squad-lost';
+  if (outcome === 'defeat' || roster.every((m) => m.dead)) return 'squad-lost';
   return null;
 }
 
 // ---------- derived stats ----------
 
-export function baseStats(clique: Clique, level: number): StatBlock {
+export function baseStats(clique: Clique, schoolClass: SchoolClass, level: number): StatBlock {
   const c = CLIQUES[clique];
+  const k = CLASSES[schoolClass];
   const n = level - 1;
   return {
-    hp: c.base.hp + c.growth.hp * n,
-    mobility: c.base.mobility + (c.mobilityEvery > 0 ? Math.floor(n / c.mobilityEvery) : 0),
-    aim: c.base.aim + c.growth.aim * n,
-    defense: c.base.defense + c.growth.defense * n,
-    crit: c.base.crit + c.growth.crit * n,
+    hp: c.base.hp + (k.base.hp ?? 0) + (c.growth.hp + (k.growth.hp ?? 0)) * n,
+    mobility: c.base.mobility + (k.base.mobility ?? 0) + (c.mobilityEvery > 0 ? Math.floor(n / c.mobilityEvery) : 0),
+    aim: c.base.aim + (k.base.aim ?? 0) + (c.growth.aim + (k.growth.aim ?? 0)) * n,
+    defense: c.base.defense + (k.base.defense ?? 0) + (c.growth.defense + (k.growth.defense ?? 0)) * n,
+    crit: c.base.crit + (k.base.crit ?? 0) + (c.growth.crit + (k.growth.crit ?? 0)) * n,
   };
 }
 
-/** Clique + level, then traits, then injuries, then floors. */
+/** Clique + class + level, then traits, then injuries, then floors. */
 export function effectiveStats(m: RosterMember): StatBlock {
-  const s = baseStats(m.clique, m.level);
+  const s = baseStats(m.clique, m.schoolClass, m.level);
   const add = (mods: Partial<StatBlock>): void => {
     for (const k of Object.keys(mods) as Array<keyof StatBlock>) s[k] += mods[k] ?? 0;
   };
@@ -198,7 +262,7 @@ export function memberSpec(m: RosterMember, x: number, y: number): UnitSpec {
     id: m.id,
     name: m.name,
     team: 'player',
-    role: CLIQUES[m.clique].label,
+    role: `${CLIQUES[m.clique].label} / ${CLASSES[m.schoolClass].label}`,
     x,
     y,
     hp: Math.min(m.hp, s.hp),
@@ -208,21 +272,21 @@ export function memberSpec(m: RosterMember, x: number, y: number): UnitSpec {
     defense: s.defense,
     crit: s.crit,
     weapon: weaponOf(m),
+    ...(m.protagonist ? { protagonist: true } : {}),
   };
 }
 
 /**
- * Swap the roster into a scenario's player slots (same positions, same order), leaving the map and
- * the enemies alone. Only the living deploy; if the scenario has fewer slots than there are living
- * members, the first ones go.
+ * Swap the squad into a scenario's player slots (same positions, same order), leaving the map and
+ * the enemies alone. `squad` is the ids you picked; it is run through `chooseSquad`, so the player
+ * character is always in, the dead never are, and gaps are filled from the roster.
  */
-export function deployRoster(sc: Scenario, roster: Roster): Scenario {
+export function deployRoster(sc: Scenario, roster: Roster, squad?: readonly string[]): Scenario {
   const slots = sc.units.filter((u) => u.team === 'player');
   const rest = sc.units.filter((u) => u.team !== 'player');
-  const squad = livingSquad(roster)
-    .slice(0, slots.length)
-    .map((m, i) => memberSpec(m, slots[i].x, slots[i].y));
-  return { ...sc, units: [...squad, ...rest] };
+  const ids = chooseSquad(roster, squad).slice(0, slots.length);
+  const members = ids.map((id) => roster.find((m) => m.id === id) as RosterMember);
+  return { ...sc, units: [...members.map((m, i) => memberSpec(m, slots[i].x, slots[i].y)), ...rest] };
 }
 
 // ---------- results: battle -> roster ----------
@@ -240,11 +304,12 @@ export interface ResultReport {
 export type Fate = 'dead' | 'injured';
 
 /**
- * What going down costs. Permadeath is the default: a unit that falls is gone. This is the single
- * seam for anything that softens that later (a skill, an item, a story beat): return 'injured' for
- * the cases that should survive as a serious injury instead. It runs once per downed member.
+ * What going down costs. Permadeath is the default: a unit that falls is gone. The one exception is
+ * the player character's first fall in a battle (a knock-down, `downed`): they survive it, with a
+ * serious injury. This is also the seam for anything that softens permadeath later (a skill, an
+ * item, a story beat). It runs once per member who fell.
  */
-export const fateOfDowned = (_m: RosterMember, _u: Unit): Fate => 'dead';
+export const fateOfDowned = (_m: RosterMember, u: Unit): Fate => (u.downed ? 'injured' : 'dead');
 
 export interface ResultOptions {
   /** override the fate rule (defaults to `fateOfDowned`) */
@@ -306,7 +371,8 @@ function addXp(m: RosterMember, amount: number, rng: RngHolder, notes: string[])
  *
  * - Everyone who deployed keeps the HP they ended with.
  * - A unit that went down meets its `fate`: by default it dies (permanently, even on a retreat: it
- *   fell before you pulled out). If the fate is 'injured' it comes back at 1 HP with an injury.
+ *   fell before you pulled out). The player character's knock-down is 'injured' instead: they come
+ *   back at 1 HP with an injury (also if they were revived mid-fight, keeping their revived HP).
  * - Victory and defeat both count as a completed fight: injuries tick down and XP is awarded. A
  *   retreat does neither (otherwise abandoning fights would be a free way to heal and level).
  * - The dead are skipped: no XP, no revival, never deployed again.
@@ -323,8 +389,9 @@ export function applyBattleResult(roster: Roster, state: GameState, rng: RngHold
     const u = state.units.find((x) => x.team === 'player' && x.id === m.id);
     if (!u) continue; // stayed at camp
 
-    const downed = !u.alive;
-    if (downed && fateOf(m, u) === 'dead') {
+    // Fell at some point: still down at the end, or knocked down and then revived (the leader's one free fall).
+    const downed = !u.alive || (u.downs ?? 0) > 0;
+    if (!u.alive && fateOf(m, u) === 'dead') {
       m.dead = true;
       m.hp = 0;
       fallen.push(m.id);
@@ -335,7 +402,7 @@ export function applyBattleResult(roster: Roster, state: GameState, rng: RngHold
     if (completed) tickInjuries(m, notes); // before new injuries, so those keep their full duration
 
     if (downed) {
-      m.hp = 1;
+      m.hp = u.alive ? Math.max(1, u.hp) : 1;
       addInjury(m, rng, notes);
     } else {
       m.hp = Math.max(1, u.hp);

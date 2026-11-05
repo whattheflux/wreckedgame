@@ -28,11 +28,12 @@ export function buildMap(width: number, height: number, edit: Edit, biome?: Biom
 
 // ---------- squad / rivals ----------
 
+/** The hand-built sandbox squad: the four companions at level 1 (a guard test keeps this in step with the roster). */
 export const SQUAD_TEMPLATE = [
-  { id: 'p1', name: 'Amy', role: 'Popular', hp: 10, mobility: 6, aim: 72, defense: 10, crit: 10, weapon: WEAPONS.slingshot },
-  { id: 'p2', name: 'Scott', role: 'Jock', hp: 14, mobility: 5, aim: 62, defense: 0, crit: 5, weapon: WEAPONS.javelin },
-  { id: 'p3', name: 'Tyson', role: 'Nerd', hp: 9, mobility: 5, aim: 75, defense: 0, crit: 5, weapon: WEAPONS.flareGun },
-  { id: 'p4', name: 'Anna', role: 'Drama kid', hp: 11, mobility: 5, aim: 66, defense: 5, crit: 10, weapon: WEAPONS.slingshot },
+  { id: 'p1', name: 'Amy', role: 'Popular / Home Ec', hp: 11, mobility: 6, aim: 72, defense: 12, crit: 10, weapon: WEAPONS.slingshot },
+  { id: 'p2', name: 'Scott', role: 'Jock / Sport', hp: 16, mobility: 6, aim: 62, defense: 0, crit: 5, weapon: WEAPONS.javelin },
+  { id: 'p3', name: 'Tyson', role: 'Nerd / Science', hp: 9, mobility: 5, aim: 78, defense: 0, crit: 5, weapon: WEAPONS.flareGun },
+  { id: 'p4', name: 'Anna', role: 'Drama kid / Drama', hp: 11, mobility: 5, aim: 66, defense: 8, crit: 13, weapon: WEAPONS.slingshot },
 ];
 
 export function squadAt(positions: Array<[number, number]>): UnitSpec[] {
