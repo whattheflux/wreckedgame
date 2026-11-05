@@ -46,4 +46,4 @@ Stoner (male and female) sheets are on a flat green screen: use `--chroma --scal
 `<name>/ko.png` (optional) is the lying-down pose drawn while a unit is downed; without it the board falls back to a
 grey crossed-out marker. Cut a green-screen sheet of lying figures with
 `python3 -I tools/slice_ko_sheet.py SHEET.jpg name1,name2,...` (names in reading order; rows are found from the figures,
-so rows may hold different counts). Same 0.385 scale as the standing sprites; each figure is centred on the 256 canvas.
+so rows may hold different counts). Same 0.385 scale as the standing sprites for the big sheets; each figure is centred on the 256 canvas. A sheet at a different resolution needs its own `--scale` (the new kid pair came as a small image and uses 0.8) so the body lands about 190-220 px long.

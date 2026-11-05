@@ -48,7 +48,7 @@ describe('bundled art', () => {
   });
 
   it('has a knocked-out pose for every character that has art, and none for a stranger', () => {
-    for (const body of ['pc-male', 'pc-female', 'scott', 'amy', 'tyson', 'anna', 'drama-guy', 'stoner-male', 'stoner-female', 'shop-male', 'shop-female', 'goth-male', 'goth-female', 'cheer-male', 'cheer-female', 'rebel-male', 'rebel-female', 'bigkid-male', 'bigkid-female']) {
+    for (const body of ['pc-male', 'pc-female', 'scott', 'amy', 'tyson', 'anna', 'drama-guy', 'stoner-male', 'stoner-female', 'shop-male', 'shop-female', 'goth-male', 'goth-female', 'cheer-male', 'cheer-female', 'rebel-male', 'rebel-female', 'bigkid-male', 'bigkid-female', 'newkid-male', 'newkid-female']) {
       expect(koUrl(body), body).toBeTruthy();
     }
     expect(koUrl('nobody')).toBeNull();
