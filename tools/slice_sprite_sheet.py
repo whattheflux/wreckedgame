@@ -46,8 +46,17 @@ def cut(path, flood=False, chroma=False):
                 # Flat green-screen ground: anything where green clearly dominates is ground, the grid
                 # lines and the dark-green floor shadow included (the board draws its own base).
                 r_, g_, b_ = cell[..., 0], cell[..., 1], cell[..., 2]
-                ground = (g_ - r_ > 45) & (g_ - b_ > 45)
+                ground = (g_ - r_ > 45) & (g_ - b_ > 45) & (b_ < 34)  # b<34 keeps green clothing (blue stays high there)
                 fg = ndi.binary_opening(~ground, iterations=1)
+                # small green scraps (shadow/grid pixels that are less saturated than the ground) hugging the
+                # outline: drop small green-ish blobs that touch the ground, keep big ones (green clothing)
+                greenish = fg & (g_ - r_ > 25) & (g_ - b_ > 20) & (b_ < 50)
+                gl2, gn2 = ndi.label(greenish)
+                near_ground = ndi.binary_dilation(~fg, iterations=3)
+                for i in range(1, gn2 + 1):
+                    comp = gl2 == i
+                    if comp.sum() < 400 and (comp & near_ground).any():
+                        fg &= ~comp
             elif flood:
                 # Dark ground: dark boots and shadow are close to it in colour, so instead of a colour
                 # threshold take everything connected to the cell edge that still looks like ground.
@@ -69,6 +78,15 @@ def cut(path, flood=False, chroma=False):
                 raise SystemExit(f'empty cell {DIRS[r][c]}')
             keep = ndi.binary_fill_holes(lab == 1 + int(np.argmax(ndi.sum(fg, lab, range(1, n + 1)))))
             if chroma:
+                # leftover floor-shadow green around the shoes (dark green, never real clothing down there)
+                yy = np.where(keep.any(1))[0]
+                band = np.zeros_like(keep)
+                band[int(yy.max() - 0.2 * (yy.max() - yy.min())):] = True
+                shade = band & (g_ - r_ > 15) & (g_ - b_ > 8) & (b_ < 60)
+                keep &= ~shade
+                lab3, n3 = ndi.label(keep)
+                if n3 > 1:
+                    keep = lab3 == 1 + int(np.argmax(ndi.sum(keep, lab3, range(1, n3 + 1))))
                 keep &= ~ground  # ground seen through the gap between the legs, enclosed by the figure
             alpha = np.where(keep, 255.0, 0.0)
             mx = cell.max(2)
