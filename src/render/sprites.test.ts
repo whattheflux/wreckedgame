@@ -39,7 +39,7 @@ describe('nearestDir', () => {
 
 describe('bundled art', () => {
   it('has all eight facings for both player bodies', () => {
-    for (const body of ['pc-male', 'pc-female', 'scott', 'amy', 'tyson', 'drama-guy']) {
+    for (const body of ['pc-male', 'pc-female', 'scott', 'amy', 'tyson', 'anna', 'drama-guy']) {
       for (const d of DIRS) expect(spriteUrl(body, d), `${body}/${d}`).toBeTruthy();
       expect(previewUrl(body)).toBe(spriteUrl(body, 'down'));
     }
