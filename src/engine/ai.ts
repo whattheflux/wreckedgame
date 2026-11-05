@@ -60,9 +60,8 @@ function decide(state: GameState, u: Unit): Action {
       const pv = computeShot(state.map, u, node.pos, p);
       if (!pv.canShoot) continue;
       const chance = pv.hitChance / 100;
-      let v = chance * avg(pv.dmgMin, pv.dmgMax);
+      let v = chance * avg(pv.dmgMin, pv.dmgMax) * (1 + 0.5 * (pv.critChance / 100)); // a crit is +50% damage
       if (pv.dmgMax >= p.hp) v += chance * 4; // go for the kill
-      if (pv.flanked) v += 0.5;
       if (v > value) {
         value = v;
         targetId = p.id;

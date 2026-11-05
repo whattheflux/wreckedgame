@@ -306,7 +306,7 @@ function renderPanel(sel: Unit | undefined): void {
     lines.push(
       `<div style="margin-top:8px"><b>${esc(sel.name)}</b> <span style="opacity:.7">${sel.role}${member ? ` Lv ${member.level}` : ''}</span><br>` +
         `HP ${sel.hp}/${sel.maxHp} &middot; AP ${sel.ap}/${sel.maxAp} &middot; Ammo ${sel.ammo}/${sel.weapon.clip}<br>` +
-        `${sel.weapon.name} ${sel.weapon.damage[0]}-${sel.weapon.damage[1]} dmg, range ${sel.weapon.range}<br>` +
+        `${sel.weapon.name} ${sel.weapon.damage[0]}-${sel.weapon.damage[1]} dmg, range ${sel.weapon.range} (full accuracy to ${sel.weapon.optimal})<br>` +
         `Aim ${sel.aim} &middot; Def ${sel.defense} &middot; Move ${sel.mobility}/${sel.mobility * 2}` +
         (member ? memberTags(member) : '') +
         `</div>`,
@@ -323,8 +323,9 @@ function renderPanel(sel: Unit | undefined): void {
         `<div style="margin-top:8px;border-top:1px solid #22303c;padding-top:6px"><b>${esc(t.name)}</b> HP ${t.hp}/${t.maxHp}<br>` +
           (pv.canShoot
             ? `Hit ${pv.hitChance}% &middot; Crit ${pv.critChance}% &middot; ${pv.dmgMin}-${pv.dmgMax} dmg<br>` +
-              `Cover: ${pv.cover}${pv.flanked ? ' (FLANKED)' : ''}`
-            : `<span style="opacity:.7">${pv.reason}</span>`) +
+              `Range ${pv.distance.toFixed(1)}${pv.rangePenalty ? ` (-${pv.rangePenalty} hit)` : ''} &middot; ` +
+              (pv.flanked ? '<b style="color:#ff8a70">FLANKED: a hit always crits</b>' : `Cover: ${pv.cover}${pv.coverPenalty ? ` (-${pv.coverPenalty} hit)` : ''}`)
+            : `<span style="opacity:.7">${pv.reason === 'Out of range' ? `Out of range (${pv.distance.toFixed(1)} tiles, max ${pv.range})` : pv.reason}</span>`) +
           `</div>`,
       );
     }

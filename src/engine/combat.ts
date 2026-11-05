@@ -4,7 +4,8 @@ import { rand, randInt } from './rng';
 
 export const COVER_PENALTY: Record<CoverType, number> = { none: 0, half: 20, full: 40 };
 export const OVERWATCH_PENALTY = 15;
-export const FLANK_CRIT_BONUS = 25;
+/** A flanked target (hugging cover, but not on the side you are shooting from) is crit-certain: if the shot lands, it crits. */
+export const FLANK_CRIT_CHANCE = 100;
 export const RANGE_PENALTY_PER_TILE = 4;
 
 export type Shooter = Pick<Unit, 'aim' | 'critChance' | 'weapon'>;
@@ -20,6 +21,12 @@ export interface ShotPreview {
   dmgMin: number;
   dmgMax: number;
   distance: number;
+  /** the shooter's weapon range (max, and where accuracy starts to fall off), so a UI can explain 'out of range' */
+  range: number;
+  optimal: number;
+  /** the parts of the hit chance, for tooltips (all in points; penalties are positive) */
+  rangePenalty: number;
+  coverPenalty: number;
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
@@ -36,15 +43,27 @@ export function computeShot(
   const distance = dist(from, target.pos);
   const cover = coverAgainst(map, from, target.pos);
   const flanked = isFlanked(map, from, target.pos);
-  const base = { cover, flanked, dmgMin: w.damage[0], dmgMax: w.damage[1], distance, hitChance: 0, critChance: 0 };
+  const rangePenalty = Math.max(0, distance - w.optimal) * RANGE_PENALTY_PER_TILE;
+  const base = {
+    cover,
+    flanked,
+    dmgMin: w.damage[0],
+    dmgMax: w.damage[1],
+    distance,
+    hitChance: 0,
+    critChance: 0,
+    range: w.range,
+    optimal: w.optimal,
+    rangePenalty: Math.round(rangePenalty),
+    coverPenalty: COVER_PENALTY[cover],
+  };
 
   if (distance > w.range) return { ...base, canShoot: false, reason: 'Out of range' };
   if (!hasLineOfSight(map, from, target.pos)) return { ...base, canShoot: false, reason: 'No line of sight' };
 
-  const rangePenalty = Math.max(0, distance - w.optimal) * RANGE_PENALTY_PER_TILE;
   const hit =
     shooter.aim + w.aimMod - target.defense - COVER_PENALTY[cover] - rangePenalty - (overwatch ? OVERWATCH_PENALTY : 0);
-  const crit = shooter.critChance + w.critMod + (flanked ? FLANK_CRIT_BONUS : 0);
+  const crit = flanked ? FLANK_CRIT_CHANCE : shooter.critChance + w.critMod;
 
   return {
     ...base,

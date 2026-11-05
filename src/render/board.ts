@@ -1,5 +1,5 @@
 import type { Biome, GameState, Pos, Terrain, Unit } from '../engine/types';
-import type { PathNode } from '../engine/grid';
+import { coverAgainst, dist, posKey, type PathNode } from '../engine/grid';
 import type { Hint } from '../engine/hint';
 import { computeShot, type ShotPreview } from '../engine/combat';
 
@@ -282,6 +282,9 @@ export class BoardRenderer {
     const sel = this.selected(state, view);
     if (!sel) return;
 
+    const foes = state.units.filter((e) => e.alive && e.team !== sel.team && this.canSee(e, view));
+    const hoverNode = view.hover && view.reach ? view.reach.get(posKey(view.hover.x, view.hover.y)) : undefined;
+
     if (view.mode === 'move' && view.reach) {
       for (const n of view.reach.values()) {
         if (n.cost === 0) continue;
@@ -289,19 +292,47 @@ export class BoardRenderer {
         ctx.fillStyle = n.cost <= sel.mobility ? 'rgba(80,170,255,0.30)' : 'rgba(255,205,80,0.26)';
         ctx.fillRect(o.x + 1, o.y + 1, tile - 2, tile - 2);
       }
+      // Cover you would get on each reachable tile, against the nearest enemy you can see.
+      const nearest = (p: Pos): Unit | undefined => foes.reduce<Unit | undefined>((b, e) => (!b || dist(p, e.pos) < dist(p, b.pos) ? e : b), undefined);
+      for (const n of view.reach.values()) {
+        const foe = nearest(n.pos);
+        if (!foe) break;
+        const cover = coverAgainst(state.map, foe.pos, n.pos);
+        if (cover === 'none') continue;
+        const o = this.px(n.pos);
+        this.drawShield(o.x + tile * 0.5, o.y + tile * 0.5, tile * 0.2, cover, 0.9);
+      }
+    }
+
+    // Weapon range: green ring = full accuracy, amber ring = maximum range. Brightest while aiming.
+    // Hovering a reachable tile shows the same rings from there, and what you could hit from it.
+    const aiming = view.mode === 'shoot';
+    this.drawRangeRings(sel.pos, sel.weapon.optimal, sel.weapon.range, aiming ? 1 : 0.45, aiming);
+    if (hoverNode && hoverNode.cost > 0 && view.hover) {
+      this.drawRangeRings(view.hover, sel.weapon.optimal, sel.weapon.range, 0.9, false);
+      for (const e of foes) {
+        const pv = computeShot(state.map, sel, view.hover, e);
+        if (!pv.canShoot) continue;
+        const c = this.center(e.pos);
+        this.drawTag(`${pv.hitChance}%`, c.x, c.y + tile * 0.62, '#ffd27a');
+      }
     }
 
     if (view.mode === 'shoot') {
       for (const e of state.units) {
         if (!e.alive || e.team === sel.team || !this.canSee(e, view)) continue;
         const pv = computeShot(state.map, sel, sel.pos, e);
-        if (!pv.canShoot) continue;
         const c = this.center(e.pos);
+        if (!pv.canShoot) {
+          if (pv.reason === 'Out of range') this.drawTag('OUT OF RANGE', c.x, c.y + tile * 0.62, '#9aa7b3');
+          continue;
+        }
         ctx.strokeStyle = 'rgba(255,90,70,0.9)';
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(c.x, c.y, tile * 0.46, 0, Math.PI * 2);
         ctx.stroke();
+        this.drawCoverBadge(e.pos, pv);
       }
     }
 
@@ -311,6 +342,103 @@ export class BoardRenderer {
       ctx.lineWidth = 2;
       ctx.strokeRect(o.x + 1, o.y + 1, tile - 2, tile - 2);
     }
+  }
+
+  /** Two rings around a tile: solid green out to full-accuracy range, dashed amber out to maximum range. */
+  private drawRangeRings(at: Pos, optimal: number, range: number, alpha: number, labels: boolean): void {
+    const { ctx, tile } = this;
+    const c = this.center(at);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = 2;
+    ctx.fillStyle = 'rgba(120,220,140,0.07)';
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, optimal * tile, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(120,220,140,0.95)';
+    ctx.stroke();
+    ctx.setLineDash([7, 6]);
+    ctx.strokeStyle = 'rgba(255,200,90,0.95)';
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, range * tile, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+    if (labels) {
+      this.drawTag(`best ${optimal}`, c.x, c.y - optimal * tile - 8, '#8fe0a0');
+      this.drawTag(`max ${range}`, c.x, c.y - range * tile - 8, '#ffd27a');
+    }
+  }
+
+  /** A small dark pill with text, centred on (x, y). */
+  private drawTag(text: string, x: number, y: number, color: string): void {
+    const { ctx, tile } = this;
+    ctx.save();
+    ctx.font = `bold ${Math.max(10, Math.round(tile * 0.3))}px system-ui, sans-serif`;
+    const w = ctx.measureText(text).width + 10;
+    const h = Math.max(15, tile * 0.42);
+    ctx.fillStyle = 'rgba(10,16,22,0.88)';
+    ctx.fillRect(x - w / 2, y - h / 2, w, h);
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x, y + 1);
+    ctx.restore();
+  }
+
+  /** Cover shield: full = solid, half = bottom half filled. `flank` draws it red and broken. */
+  private drawShield(x: number, y: number, s: number, kind: 'half' | 'full' | 'flank', alpha = 1): void {
+    const { ctx } = this;
+    const path = (): void => {
+      ctx.beginPath();
+      ctx.moveTo(x, y - s);
+      ctx.lineTo(x + s * 0.85, y - s * 0.6);
+      ctx.lineTo(x + s * 0.85, y);
+      ctx.quadraticCurveTo(x + s * 0.8, y + s * 0.75, x, y + s * 1.1);
+      ctx.quadraticCurveTo(x - s * 0.8, y + s * 0.75, x - s * 0.85, y);
+      ctx.lineTo(x - s * 0.85, y - s * 0.6);
+      ctx.closePath();
+    };
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const col = kind === 'flank' ? '#ff6a55' : '#9fd4ff';
+    path();
+    ctx.fillStyle = 'rgba(10,16,22,0.85)';
+    ctx.fill();
+    if (kind === 'full') {
+      path();
+      ctx.fillStyle = col;
+      ctx.fill();
+    } else if (kind === 'half') {
+      ctx.save();
+      path();
+      ctx.clip();
+      ctx.fillStyle = col;
+      ctx.fillRect(x - s, y, s * 2, s * 1.2);
+      ctx.restore();
+    }
+    path();
+    ctx.strokeStyle = kind === 'flank' ? '#ff6a55' : '#dff0ff';
+    ctx.lineWidth = Math.max(1.5, s * 0.16);
+    ctx.stroke();
+    if (kind === 'flank') {
+      ctx.beginPath();
+      ctx.moveTo(x - s * 0.45, y - s * 0.4);
+      ctx.lineTo(x + s * 0.45, y + s * 0.5);
+      ctx.moveTo(x + s * 0.45, y - s * 0.4);
+      ctx.lineTo(x - s * 0.45, y + s * 0.5);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** Cover status of a target as seen by the selected shooter: a shield, or a red broken one when flanked. */
+  private drawCoverBadge(at: Pos, pv: ShotPreview): void {
+    const { tile } = this;
+    const o = this.px(at);
+    const kind = pv.flanked ? 'flank' : pv.cover;
+    if (kind === 'none') return;
+    this.drawShield(o.x + tile * 0.82, o.y + tile * 0.22, tile * 0.2, kind);
   }
 
   private drawShotLine(state: GameState, view: ViewState): void {
@@ -434,23 +562,63 @@ export class BoardRenderer {
     }
   }
 
+  /** The hover tooltip: hit and crit chance, damage, and what is helping or hurting the shot. */
   private drawPreviewLabel(state: GameState, view: ViewState): void {
-    if (!view.preview || !view.previewTargetId) return;
+    const pv = view.preview;
+    if (!pv || !view.previewTargetId) return;
     const target = state.units.find((u) => u.id === view.previewTargetId);
     if (!target) return;
     const { ctx, tile } = this;
     const c = this.center(target.pos);
-    const text = view.preview.canShoot ? `${view.preview.hitChance}%` : view.preview.reason ?? '';
-    ctx.font = `bold ${Math.round(tile * 0.36)}px system-ui, sans-serif`;
-    const tw = ctx.measureText(text).width + 12;
-    const bx = c.x - tw / 2;
-    const by = c.y - tile * 0.95;
-    ctx.fillStyle = 'rgba(10,16,22,0.88)';
-    ctx.fillRect(bx, by, tw, tile * 0.5);
-    ctx.fillStyle = view.preview.canShoot ? '#ffd27a' : '#9aa7b3';
-    ctx.textAlign = 'center';
+
+    const lines: Array<{ text: string; color: string; bold?: boolean }> = [];
+    if (pv.canShoot) {
+      const hitColor = pv.hitChance >= 66 ? '#8fe0a0' : pv.hitChance >= 40 ? '#ffd27a' : '#ff8a70';
+      lines.push({ text: `HIT ${pv.hitChance}%    CRIT ${pv.critChance}%`, color: hitColor, bold: true });
+      lines.push({ text: `Damage ${pv.dmgMin}-${pv.dmgMax}${pv.critChance > 0 ? ` (crit x1.5)` : ''}`, color: '#d7e0e8' });
+      lines.push(
+        pv.rangePenalty > 0
+          ? { text: `Range ${pv.distance.toFixed(1)}: -${pv.rangePenalty} (best within ${pv.optimal})`, color: '#ffd27a' }
+          : { text: `Range ${pv.distance.toFixed(1)}: full accuracy`, color: '#8fe0a0' },
+      );
+      if (pv.flanked) lines.push({ text: 'FLANKED: a hit is a guaranteed crit', color: '#ff8a70', bold: true });
+      else if (pv.cover === 'none') lines.push({ text: 'No cover', color: '#d7e0e8' });
+      else lines.push({ text: `${pv.cover === 'full' ? 'Full' : 'Half'} cover: -${pv.coverPenalty}`, color: '#9fd4ff' });
+    } else if (pv.reason === 'Out of range') {
+      lines.push({ text: 'OUT OF RANGE', color: '#ff8a70', bold: true });
+      lines.push({ text: `${pv.distance.toFixed(1)} tiles away, max ${pv.range}`, color: '#d7e0e8' });
+    } else {
+      lines.push({ text: (pv.reason ?? 'Cannot shoot').toUpperCase(), color: '#ff8a70', bold: true });
+    }
+
+    const fs = Math.max(11, Math.round(tile * 0.34));
+    const lh = fs + 5;
+    ctx.save();
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, c.x, by + tile * 0.26);
+    let w = 0;
+    for (const l of lines) {
+      ctx.font = `${l.bold ? 'bold ' : ''}${fs}px system-ui, sans-serif`;
+      w = Math.max(w, ctx.measureText(l.text).width);
+    }
+    w += 18;
+    const h = lines.length * lh + 10;
+    const { w: cw } = this.layout(state);
+    let bx = c.x - w / 2;
+    let by = c.y - tile * 0.6 - h;
+    if (by < 4) by = c.y + tile * 0.6; // not enough room above: go below
+    bx = Math.min(Math.max(4, bx), cw - w - 4);
+    ctx.fillStyle = 'rgba(10,16,22,0.94)';
+    ctx.strokeStyle = pv.flanked && pv.canShoot ? '#ff8a70' : 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 1;
+    ctx.fillRect(bx, by, w, h);
+    ctx.strokeRect(bx + 0.5, by + 0.5, w - 1, h - 1);
+    lines.forEach((l, i) => {
+      ctx.font = `${l.bold ? 'bold ' : ''}${fs}px system-ui, sans-serif`;
+      ctx.fillStyle = l.color;
+      ctx.fillText(l.text, bx + 9, by + 5 + lh * i + lh / 2);
+    });
+    ctx.restore();
   }
 
   private drawEffects(): void {

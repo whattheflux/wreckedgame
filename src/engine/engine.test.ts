@@ -95,6 +95,31 @@ describe('shot maths', () => {
     expect(computeShot(map, { ...shooter, aim: -500 }, { x: 0, y: 0 }, base).hitChance).toBe(5);
   });
 
+  it('a flanked shot is crit-certain, however low its hit chance, and the cover penalty vanishes', () => {
+    // Crate at (2,1) is the target's west cover; shooting from the east flanks it.
+    const crate = parseMap(['.......', '..h....', '.......']);
+    const target = { defense: 0, pos: { x: 3, y: 1 }, hp: 10 };
+    const far = { ...shooter, critChance: 5, weapon: { ...shooter.weapon, optimal: 1, range: 20, critMod: 0 } };
+    const flank = computeShot(crate, far, { x: 6, y: 1 }, target);
+    expect(flank.flanked).toBe(true);
+    expect(flank.critChance).toBe(100);
+    expect(flank.hitChance).toBeLessThan(70); // range still bites
+    expect(flank.coverPenalty).toBe(0);
+    expect(flank.rangePenalty).toBe(Math.round((3 - 1) * 4));
+    // From the covered side it is an ordinary shot with the shooter's own crit chance.
+    const head = computeShot(crate, far, { x: 0, y: 1 }, target);
+    expect(head.flanked).toBe(false);
+    expect(head.critChance).toBe(5);
+    expect(head.coverPenalty).toBe(20);
+  });
+
+  it('reports the weapon range and the parts of the hit chance for tooltips', () => {
+    const short = { ...shooter, weapon: { ...shooter.weapon, range: 3, optimal: 2 } };
+    const pv = computeShot(map, short, { x: 0, y: 0 }, { defense: 0, pos: { x: 6, y: 0 }, hp: 10 });
+    expect(pv.canShoot).toBe(false);
+    expect(pv).toMatchObject({ range: 3, optimal: 2, distance: 6 });
+  });
+
   it('rejects out-of-range and blocked shots', () => {
     const short = { ...shooter, weapon: { ...shooter.weapon, range: 3 } };
     expect(computeShot(map, short, { x: 0, y: 0 }, { defense: 0, pos: { x: 6, y: 0 }, hp: 10 }).canShoot).toBe(false);
