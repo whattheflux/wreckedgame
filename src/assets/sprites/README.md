@@ -37,5 +37,6 @@ folder can start with just `down` and `up` and grow. Units start facing right (s
 `tools/slice_sprite_sheet.py` cuts a 4x2 sheet (labelled cells on a flat grey ground) into the eight
 transparent 256x256 files. Use the same `--scale` for every character so they stay in proportion
 (0.4257 matches the player, Scott, Amy and Tyson; the drama guy's sheet drew him larger, so he uses 0.4035; Anna's sheet was larger still, so she uses 0.385 with `--flood`). If a sheet is missing a view or one is in the wrong kit,
+Stoner (male and female) sheets are on a flat green screen: use `--chroma --scale 0.385`; the cut drops the green ground, grid, and shadow and despills the edge.
 `--only` drops it, `--flip` mirrors another facing into its place and `--copy` makes a stand-in.
 `--flood` is for sheets on a dark ground, where dark boots and the floor shadow sit close to the ground colour.
