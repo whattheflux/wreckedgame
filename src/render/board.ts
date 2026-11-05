@@ -49,6 +49,31 @@ const BIOME_WATER: Partial<Record<Biome, string>> = { marsh: '#1f4a45', volcano:
 
 const TEAM_COLOR = { player: '#3d8fc2', enemy: '#c2503d' } as const;
 
+/**
+ * Optional character art. Drop `<unit name, lowercase>.png` (or .webp) into src/assets/sprites/ and
+ * that unit is drawn with it instead of a coloured circle. Vite bundles whatever is in the folder at
+ * build time, so no request is ever made for art that doesn't exist.
+ */
+const SPRITE_URLS = import.meta.glob('../assets/sprites/*.{png,webp}', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
+const SPRITE_BY_NAME = new Map<string, string>(
+  Object.entries(SPRITE_URLS).map(([path, url]) => [path.replace(/^.*\//, '').replace(/\.(png|webp)$/, ''), url]),
+);
+const spriteImages = new Map<string, HTMLImageElement>();
+
+/** The unit's sprite once it has loaded, else null (draw the circle). */
+function spriteFor(u: Unit): HTMLImageElement | null {
+  const key = u.name.toLowerCase();
+  const url = SPRITE_BY_NAME.get(key);
+  if (!url) return null;
+  let img = spriteImages.get(key);
+  if (!img) {
+    img = new Image();
+    img.src = url;
+    spriteImages.set(key, img);
+  }
+  return img.complete && img.naturalWidth > 0 ? img : null;
+}
+
 export class BoardRenderer {
   private ctx: CanvasRenderingContext2D;
   private tile = 32;
@@ -312,34 +337,53 @@ export class BoardRenderer {
     const isSel = u.id === view.selectedId;
     const exhausted = u.team === 'player' && state.active === 'player' && u.ap <= 0;
 
-    if (isSel) {
-      ctx.strokeStyle = '#e8b04a';
-      ctx.lineWidth = 3;
+    const art = spriteFor(u);
+    const feetY = c.y + tile * 0.42;
+    const artH = tile * 1.3;
+
+    if (art) {
+      // Character art: a team-coloured base at the feet (so friend and foe read at a glance), then the sprite.
+      const artW = artH * (art.naturalWidth / art.naturalHeight);
+      ctx.globalAlpha = exhausted ? 0.5 : 1;
+      ctx.fillStyle = TEAM_COLOR[u.team];
+      ctx.strokeStyle = isSel ? '#e8b04a' : 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = isSel ? 3 : 2;
       ctx.beginPath();
-      ctx.arc(c.x, c.y, r + 4, 0, Math.PI * 2);
+      ctx.ellipse(c.x, feetY - 2, tile * 0.36, tile * 0.14, 0, 0, Math.PI * 2);
+      ctx.fill();
       ctx.stroke();
+      ctx.drawImage(art, c.x - artW / 2, feetY - artH, artW, artH);
+      ctx.globalAlpha = 1;
+    } else {
+      if (isSel) {
+        ctx.strokeStyle = '#e8b04a';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, r + 4, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = TEAM_COLOR[u.team];
+      ctx.globalAlpha = exhausted ? 0.5 : 1;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.round(tile * 0.34)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(u.name[0], c.x, c.y + 1);
     }
 
-    ctx.fillStyle = TEAM_COLOR[u.team];
-    ctx.globalAlpha = exhausted ? 0.5 : 1;
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    ctx.fillStyle = '#fff';
-    ctx.font = `bold ${Math.round(tile * 0.34)}px system-ui, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(u.name[0], c.x, c.y + 1);
-
-    // HP bar
+    // HP bar (above the art when there is some)
     const bw = tile * 0.7;
     const bx = c.x - bw / 2;
-    const by = c.y - r - 8;
+    const by = art ? feetY - artH - 8 : c.y - r - 8;
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(bx, by, bw, 4);
     ctx.fillStyle = u.hp / u.maxHp > 0.4 ? '#6fcf7a' : '#e0674e';

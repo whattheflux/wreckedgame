@@ -29,10 +29,10 @@ export function buildMap(width: number, height: number, edit: Edit, biome?: Biom
 // ---------- squad / rivals ----------
 
 export const SQUAD_TEMPLATE = [
-  { id: 'p1', name: 'Mia', role: 'Scout', hp: 10, mobility: 6, aim: 72, defense: 10, crit: 10, weapon: WEAPONS.slingshot },
-  { id: 'p2', name: 'Jonah', role: 'Jock', hp: 14, mobility: 5, aim: 62, defense: 0, crit: 5, weapon: WEAPONS.javelin },
-  { id: 'p3', name: 'Priya', role: 'Nerd', hp: 9, mobility: 5, aim: 75, defense: 0, crit: 5, weapon: WEAPONS.flareGun },
-  { id: 'p4', name: 'Sam', role: 'Drama kid', hp: 11, mobility: 5, aim: 66, defense: 5, crit: 10, weapon: WEAPONS.slingshot },
+  { id: 'p1', name: 'Amy', role: 'Popular', hp: 10, mobility: 6, aim: 72, defense: 10, crit: 10, weapon: WEAPONS.slingshot },
+  { id: 'p2', name: 'Scott', role: 'Jock', hp: 14, mobility: 5, aim: 62, defense: 0, crit: 5, weapon: WEAPONS.javelin },
+  { id: 'p3', name: 'Tyson', role: 'Nerd', hp: 9, mobility: 5, aim: 75, defense: 0, crit: 5, weapon: WEAPONS.flareGun },
+  { id: 'p4', name: 'Anna', role: 'Drama kid', hp: 11, mobility: 5, aim: 66, defense: 5, crit: 10, weapon: WEAPONS.slingshot },
 ];
 
 export function squadAt(positions: Array<[number, number]>): UnitSpec[] {

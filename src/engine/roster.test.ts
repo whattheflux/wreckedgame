@@ -16,6 +16,9 @@ import {
   deployRoster,
   effectiveStats,
   encounterScenario,
+  fateOfDowned,
+  gameOverReason,
+  livingSquad,
   restAtCamp,
   shoot,
   xpToNext,
@@ -34,6 +37,9 @@ describe('starter roster', () => {
   it('reproduces the original squad template exactly at level 1 (balance guard)', () => {
     const roster = createStarterRoster();
     expect(roster).toHaveLength(SQUAD_TEMPLATE.length);
+    expect(roster.map((m) => m.name)).toEqual(['Amy', 'Scott', 'Tyson', 'Anna']);
+    expect(roster.filter((m) => m.protagonist).map((m) => m.name)).toEqual(['Amy']);
+    expect(roster.every((m) => !m.dead)).toBe(true);
     SQUAD_TEMPLATE.forEach((t, i) => {
       const m = roster[i];
       const s = effectiveStats(m);
@@ -56,19 +62,19 @@ describe('effectiveStats', () => {
   it('grows by clique each level, with mobility on its own schedule', () => {
     const jock = baseStats('jock', 3);
     expect(jock).toMatchObject({ hp: 14 + 2 * 2, aim: 62 + 2, crit: 5 + 2, mobility: 5 });
-    expect(baseStats('scout', 3).mobility).toBe(6);
-    expect(baseStats('scout', 4).mobility).toBe(7);
+    expect(baseStats('popular', 3).mobility).toBe(6);
+    expect(baseStats('popular', 4).mobility).toBe(7);
   });
 
   it('stacks traits and injuries', () => {
-    const m = createStarterRoster()[1]; // Jonah, jock
+    const m = createStarterRoster()[1]; // Scott, jock
     m.traits = ['tough', 'eagle-eyed'];
     m.injuries = [{ id: 'twisted-ankle', left: 2 }];
     expect(effectiveStats(m)).toMatchObject({ hp: 16, aim: 67, mobility: 4 });
   });
 
   it('never drops below the floors', () => {
-    const m = createStarterRoster()[2]; // Priya, aim 75
+    const m = createStarterRoster()[2]; // Tyson, aim 75
     m.injuries = Array.from({ length: 6 }, () => ({ id: 'concussion' as const, left: 2 }));
     expect(effectiveStats(m).aim).toBe(30);
   });
@@ -149,7 +155,7 @@ describe('applyBattleResult', () => {
     expect(byId(roster, 'p2').hp).toBe(14);
   });
 
-  it('brings a downed unit back at 1 HP with an injury', () => {
+  it('kills a downed unit by default (permadeath) and reports it', () => {
     const roster = createStarterRoster();
     const s = battleFor(roster);
     const down = unitOf(s, 'p2');
@@ -158,10 +164,56 @@ describe('applyBattleResult', () => {
     s.winner = 'player';
     const report = applyBattleResult(roster, s, rng());
     const m = byId(roster, 'p2');
+    expect(m.dead).toBe(true);
+    expect(m.hp).toBe(0);
+    expect(m.injuries).toHaveLength(0);
+    expect(report.fallen).toEqual(['p2']);
+    expect(report.notes).toContain("Scott didn't make it.");
+    expect(fateOfDowned(m, down)).toBe('dead');
+  });
+
+  it('brings a downed unit back at 1 HP with an injury when the fate rule says so', () => {
+    const roster = createStarterRoster();
+    const s = battleFor(roster);
+    const down = unitOf(s, 'p2');
+    down.hp = 0;
+    down.alive = false;
+    s.winner = 'player';
+    const report = applyBattleResult(roster, s, rng(), { fate: () => 'injured' });
+    const m = byId(roster, 'p2');
+    expect(m.dead).toBe(false);
     expect(m.hp).toBe(1);
     expect(m.injuries).toHaveLength(1);
     expect(m.injuries[0].left).toBe(INJURIES[m.injuries[0].id].recovery);
-    expect(report.notes.some((n) => n.startsWith('Jonah went down hard'))).toBe(true);
+    expect(report.fallen).toEqual([]);
+    expect(report.notes.some((n) => n.startsWith('Scott went down hard'))).toBe(true);
+  });
+
+  it('applies the fate rule per member, so a skill or item can spare just one', () => {
+    const roster = createStarterRoster();
+    const s = battleFor(roster);
+    for (const id of ['p2', 'p3']) {
+      const u = unitOf(s, id);
+      u.hp = 0;
+      u.alive = false;
+    }
+    s.winner = 'player';
+    applyBattleResult(roster, s, rng(), { fate: (m) => (m.id === 'p3' ? 'injured' : 'dead') });
+    expect(byId(roster, 'p2').dead).toBe(true);
+    expect(byId(roster, 'p3').dead).toBe(false);
+    expect(byId(roster, 'p3').injuries).toHaveLength(1);
+  });
+
+  it('never pays, revives or redeploys the dead', () => {
+    const roster = createStarterRoster();
+    const scott = byId(roster, 'p2');
+    scott.dead = true;
+    scott.hp = 0;
+    const s = battleFor(roster);
+    expect(s.units.filter((u) => u.team === 'player').map((u) => u.id)).toEqual(['p1', 'p3', 'p4']);
+    s.winner = 'player';
+    applyBattleResult(roster, s, rng());
+    expect(scott).toMatchObject({ dead: true, hp: 0, xp: 0, level: 1 });
   });
 
   it('awards XP for taking part, hits, kills and winning', () => {
@@ -220,7 +272,7 @@ describe('applyBattleResult', () => {
     expect(xpToNext(MAX_LEVEL)).toBe(Infinity);
   });
 
-  it('a defeat downs everyone and gives participation XP only', () => {
+  it('a defeat is a total wipe under permadeath', () => {
     const roster = createStarterRoster();
     const s = battleFor(roster);
     for (const u of s.units.filter((x) => x.team === 'player')) {
@@ -228,7 +280,22 @@ describe('applyBattleResult', () => {
       u.alive = false;
     }
     s.winner = 'enemy';
-    applyBattleResult(roster, s, rng());
+    const report = applyBattleResult(roster, s, rng());
+    expect(report.outcome).toBe('defeat');
+    expect(report.fallen).toEqual(['p1', 'p2', 'p3', 'p4']);
+    expect(roster.every((m) => m.dead && m.xp === 0)).toBe(true);
+    expect(gameOverReason(roster)).toBe('protagonist-fell');
+  });
+
+  it('a defeat gives participation XP only, if the fate rule spares everyone', () => {
+    const roster = createStarterRoster();
+    const s = battleFor(roster);
+    for (const u of s.units.filter((x) => x.team === 'player')) {
+      u.hp = 0;
+      u.alive = false;
+    }
+    s.winner = 'enemy';
+    applyBattleResult(roster, s, rng(), { fate: () => 'injured' });
     for (const m of roster) {
       expect(m.hp).toBe(1);
       expect(m.injuries).toHaveLength(1);
@@ -236,7 +303,7 @@ describe('applyBattleResult', () => {
     }
   });
 
-  it('a retreat keeps HP and injuries from going down, but gives no XP and heals nothing', () => {
+  it('a retreat saves the living but gives no XP and heals nothing', () => {
     const roster = createStarterRoster();
     byId(roster, 'p1').injuries = [{ id: 'twisted-ankle', left: 2 }];
     const s = battleFor(roster);
@@ -251,7 +318,7 @@ describe('applyBattleResult', () => {
     expect(byId(roster, 'p1').hp).toBe(3);
     expect(byId(roster, 'p1').xp).toBe(0);
     expect(byId(roster, 'p1').injuries).toEqual([{ id: 'twisted-ankle', left: 2 }]); // not ticked
-    expect(byId(roster, 'p2').injuries).toHaveLength(1); // going down still costs you
+    expect(byId(roster, 'p2').dead).toBe(true); // it fell before you pulled out
   });
 
   it('heals old injuries on a completed fight, and new ones keep their full duration', () => {
@@ -263,7 +330,7 @@ describe('applyBattleResult', () => {
     u.hp = 0;
     u.alive = false;
     s.winner = 'player';
-    const report = applyBattleResult(roster, s, rng());
+    const report = applyBattleResult(roster, s, rng(), { fate: () => 'injured' });
     expect(m.injuries).toHaveLength(1);
     expect(m.injuries[0].left).toBe(INJURIES[m.injuries[0].id].recovery);
     expect(report.notes.some((n) => n.includes('recovered from shaken up'))).toBe(true);
@@ -280,7 +347,7 @@ describe('applyBattleResult', () => {
     const u = unitOf(s, 'p2');
     u.hp = 0;
     u.alive = false; // no winner: a retreat, so nothing ticks
-    applyBattleResult(roster, s, rng());
+    applyBattleResult(roster, s, rng(), { fate: () => 'injured' });
     const ids = m.injuries.map((i) => i.id);
     expect(ids).toHaveLength(2);
     expect(ids).toContain('twisted-ankle');
@@ -327,6 +394,40 @@ describe('restAtCamp', () => {
     expect(m.injuries).toEqual([{ id: 'cracked-ribs', left: 3 }]);
     expect(byId(roster, 'p1').hp).toBe(10);
     expect(restAtCamp(roster)).toBe(0);
+  });
+
+  it('skips the dead', () => {
+    const roster = createStarterRoster();
+    const anna = byId(roster, 'p4');
+    anna.dead = true;
+    anna.hp = 0;
+    expect(restAtCamp(roster)).toBe(0);
+    expect(anna.hp).toBe(0);
+  });
+});
+
+describe('game over', () => {
+  it('is null while the protagonist lives, however many others have fallen', () => {
+    const roster = createStarterRoster();
+    expect(gameOverReason(roster)).toBeNull();
+    for (const id of ['p2', 'p3', 'p4']) byId(roster, id).dead = true;
+    expect(gameOverReason(roster)).toBeNull();
+    expect(livingSquad(roster).map((m) => m.name)).toEqual(['Amy']);
+  });
+
+  it('is triggered when the protagonist falls, even with others left', () => {
+    const roster = createStarterRoster();
+    byId(roster, 'p1').dead = true;
+    expect(gameOverReason(roster)).toBe('protagonist-fell');
+  });
+
+  it('is triggered when nobody is left (no protagonist flagged)', () => {
+    const roster = createStarterRoster();
+    for (const m of roster) {
+      m.protagonist = false;
+      m.dead = true;
+    }
+    expect(gameOverReason(roster)).toBe('squad-lost');
   });
 });
 

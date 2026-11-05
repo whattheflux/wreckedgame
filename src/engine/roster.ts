@@ -1,5 +1,5 @@
 import type { Scenario, UnitSpec } from './battle';
-import type { GameState, Weapon } from './types';
+import type { GameState, Unit, Weapon } from './types';
 import { WEAPONS } from './scenarios';
 import { rand, type RngHolder } from './rng';
 
@@ -14,7 +14,7 @@ import { rand, type RngHolder } from './rng';
 
 // ---------- data tables ----------
 
-export type Clique = 'scout' | 'jock' | 'nerd' | 'drama';
+export type Clique = 'popular' | 'jock' | 'nerd' | 'drama';
 export type WeaponId = keyof typeof WEAPONS;
 
 export interface StatBlock {
@@ -37,7 +37,7 @@ export interface CliqueDef {
 }
 
 export const CLIQUES: Record<Clique, CliqueDef> = {
-  scout: { label: 'Scout', base: { hp: 10, mobility: 6, aim: 72, defense: 10, crit: 10 }, weapon: 'slingshot', growth: { hp: 1, aim: 2, defense: 1, crit: 1 }, mobilityEvery: 3 },
+  popular: { label: 'Popular', base: { hp: 10, mobility: 6, aim: 72, defense: 10, crit: 10 }, weapon: 'slingshot', growth: { hp: 1, aim: 2, defense: 1, crit: 1 }, mobilityEvery: 3 },
   jock: { label: 'Jock', base: { hp: 14, mobility: 5, aim: 62, defense: 0, crit: 5 }, weapon: 'javelin', growth: { hp: 2, aim: 1, defense: 0, crit: 1 }, mobilityEvery: 0 },
   nerd: { label: 'Nerd', base: { hp: 9, mobility: 5, aim: 75, defense: 0, crit: 5 }, weapon: 'flareGun', growth: { hp: 1, aim: 2, defense: 0, crit: 1 }, mobilityEvery: 0 },
   drama: { label: 'Drama kid', base: { hp: 11, mobility: 5, aim: 66, defense: 5, crit: 10 }, weapon: 'slingshot', growth: { hp: 1, aim: 1, defense: 1, crit: 2 }, mobilityEvery: 0 },
@@ -111,28 +111,55 @@ export interface RosterMember {
   traits: TraitId[];
   injuries: Injury[];
   weapon: WeaponId;
-  /** current HP, carried between fights; always >= 1 */
+  /** current HP, carried between fights; >= 1 while alive */
   hp: number;
+  /** fell in battle and is gone for good (see `fateOfDowned`). Kept in the roster so the squad panel can remember them. */
+  dead: boolean;
+  /** the player character: if they fall, the run is over (see `gameOverReason`) */
+  protagonist: boolean;
 }
 
 export type Roster = RosterMember[];
 
-const STARTERS: Array<{ id: string; name: string; clique: Clique }> = [
-  { id: 'p1', name: 'Mia', clique: 'scout' },
-  { id: 'p2', name: 'Jonah', clique: 'jock' },
-  { id: 'p3', name: 'Priya', clique: 'nerd' },
-  { id: 'p4', name: 'Sam', clique: 'drama' },
+const STARTERS: Array<{ id: string; name: string; clique: Clique; protagonist?: boolean }> = [
+  { id: 'p1', name: 'Amy', clique: 'popular', protagonist: true },
+  { id: 'p2', name: 'Scott', clique: 'jock' },
+  { id: 'p3', name: 'Tyson', clique: 'nerd' },
+  { id: 'p4', name: 'Anna', clique: 'drama' },
 ];
 
-export function newMember(id: string, name: string, clique: Clique): RosterMember {
-  const m: RosterMember = { id, name, clique, level: 1, xp: 0, traits: [], injuries: [], weapon: CLIQUES[clique].weapon, hp: 1 };
+export function newMember(id: string, name: string, clique: Clique, protagonist = false): RosterMember {
+  const m: RosterMember = {
+    id,
+    name,
+    clique,
+    level: 1,
+    xp: 0,
+    traits: [],
+    injuries: [],
+    weapon: CLIQUES[clique].weapon,
+    hp: 1,
+    dead: false,
+    protagonist,
+  };
   m.hp = effectiveStats(m).hp;
   return m;
 }
 
-/** The four friends you start with: level 1, no traits, full health. */
+/** The four friends you start with: level 1, no traits, full health. Amy is the player character. */
 export function createStarterRoster(): Roster {
-  return STARTERS.map((s) => newMember(s.id, s.name, s.clique));
+  return STARTERS.map((s) => newMember(s.id, s.name, s.clique, s.protagonist ?? false));
+}
+
+export const livingSquad = (roster: Roster): Roster => roster.filter((m) => !m.dead);
+
+export type GameOver = 'protagonist-fell' | 'squad-lost';
+
+/** The run ends when the player character falls, or when nobody is left. */
+export function gameOverReason(roster: Roster): GameOver | null {
+  if (roster.some((m) => m.protagonist && m.dead)) return 'protagonist-fell';
+  if (roster.every((m) => m.dead)) return 'squad-lost';
+  return null;
 }
 
 // ---------- derived stats ----------
@@ -186,12 +213,15 @@ export function memberSpec(m: RosterMember, x: number, y: number): UnitSpec {
 
 /**
  * Swap the roster into a scenario's player slots (same positions, same order), leaving the map and
- * the enemies alone. If the scenario has fewer slots than the roster, the first members deploy.
+ * the enemies alone. Only the living deploy; if the scenario has fewer slots than there are living
+ * members, the first ones go.
  */
 export function deployRoster(sc: Scenario, roster: Roster): Scenario {
   const slots = sc.units.filter((u) => u.team === 'player');
   const rest = sc.units.filter((u) => u.team !== 'player');
-  const squad = roster.slice(0, slots.length).map((m, i) => memberSpec(m, slots[i].x, slots[i].y));
+  const squad = livingSquad(roster)
+    .slice(0, slots.length)
+    .map((m, i) => memberSpec(m, slots[i].x, slots[i].y));
   return { ...sc, units: [...squad, ...rest] };
 }
 
@@ -203,6 +233,22 @@ export interface ResultReport {
   outcome: Outcome;
   /** human-readable consequences, in order, for the world log */
   notes: string[];
+  /** ids of members lost in this battle */
+  fallen: string[];
+}
+
+export type Fate = 'dead' | 'injured';
+
+/**
+ * What going down costs. Permadeath is the default: a unit that falls is gone. This is the single
+ * seam for anything that softens that later (a skill, an item, a story beat): return 'injured' for
+ * the cases that should survive as a serious injury instead. It runs once per downed member.
+ */
+export const fateOfDowned = (_m: RosterMember, _u: Unit): Fate => 'dead';
+
+export interface ResultOptions {
+  /** override the fate rule (defaults to `fateOfDowned`) */
+  fate?: (m: RosterMember, u: Unit) => Fate;
 }
 
 export const outcomeOf = (state: GameState): Outcome => (state.winner === 'player' ? 'victory' : state.winner === 'enemy' ? 'defeat' : 'retreat');
@@ -258,27 +304,41 @@ function addXp(m: RosterMember, amount: number, rng: RngHolder, notes: string[])
  * Fold a finished (or abandoned) battle back into the roster. Mutates the roster; `rng` supplies the
  * injury and trait rolls, so a seeded caller gets a reproducible outcome.
  *
- * - Everyone who deployed keeps the HP they ended with. A unit that went down is not lost: it comes
- *   back at 1 HP with an injury.
+ * - Everyone who deployed keeps the HP they ended with.
+ * - A unit that went down meets its `fate`: by default it dies (permanently, even on a retreat: it
+ *   fell before you pulled out). If the fate is 'injured' it comes back at 1 HP with an injury.
  * - Victory and defeat both count as a completed fight: injuries tick down and XP is awarded. A
  *   retreat does neither (otherwise abandoning fights would be a free way to heal and level).
+ * - The dead are skipped: no XP, no revival, never deployed again.
  */
-export function applyBattleResult(roster: Roster, state: GameState, rng: RngHolder): ResultReport {
+export function applyBattleResult(roster: Roster, state: GameState, rng: RngHolder, opts: ResultOptions = {}): ResultReport {
   const outcome = outcomeOf(state);
   const completed = outcome !== 'retreat';
+  const fateOf = opts.fate ?? fateOfDowned;
   const notes: string[] = [];
+  const fallen: string[] = [];
 
   for (const m of roster) {
+    if (m.dead) continue;
     const u = state.units.find((x) => x.team === 'player' && x.id === m.id);
     if (!u) continue; // stayed at camp
 
+    const downed = !u.alive;
+    if (downed && fateOf(m, u) === 'dead') {
+      m.dead = true;
+      m.hp = 0;
+      fallen.push(m.id);
+      notes.push(`${m.name} didn't make it.`);
+      continue;
+    }
+
     if (completed) tickInjuries(m, notes); // before new injuries, so those keep their full duration
 
-    if (u.alive) {
-      m.hp = Math.max(1, u.hp);
-    } else {
+    if (downed) {
       m.hp = 1;
       addInjury(m, rng, notes);
+    } else {
+      m.hp = Math.max(1, u.hp);
     }
 
     if (completed) {
@@ -288,13 +348,13 @@ export function applyBattleResult(roster: Roster, state: GameState, rng: RngHold
 
     m.hp = Math.min(m.hp, effectiveStats(m).hp);
   }
-  return { outcome, notes };
+  return { outcome, notes, fallen };
 }
 
-/** Rest at camp: everyone back to full HP. Injuries are not touched; they heal by completing fights. */
+/** Rest at camp: everyone still alive back to full HP. Injuries are not touched; they heal by completing fights. */
 export function restAtCamp(roster: Roster): number {
   let healed = 0;
-  for (const m of roster) {
+  for (const m of livingSquad(roster)) {
     const max = effectiveStats(m).hp;
     if (m.hp < max) {
       m.hp = max;

@@ -8,6 +8,7 @@ import {
   createBattle,
   deployRoster,
   effectiveStats,
+  gameOverReason,
   restAtCamp,
   xpToNext,
   encounterScenario,
@@ -26,6 +27,7 @@ import {
   visibleTiles,
   type ActionResult,
   type BattleEvent,
+  type GameOver,
   type GameState,
   type Pos,
   type RosterMember,
@@ -76,6 +78,9 @@ interface BattleCtx {
   sandbox: boolean;
 }
 let battleCtx: BattleCtx | null = null;
+
+/** Set once the run is lost (the player character fell, or nobody is left); play stops and only "New game" works. */
+let over: GameOver | null = null;
 
 let scenarioIndex = 0;
 let state: GameState = createBattle(SCENARIOS[scenarioIndex]);
@@ -214,6 +219,8 @@ const worldButtons: Btn[] = [
   { label: 'Sandbox: Beach (B)', key: 'b', run: () => startSandbox(0), enabled: () => true },
   { label: 'Sandbox: Jungle (J)', key: 'j', run: () => startSandbox(1), enabled: () => true },
 ];
+
+const gameOverButtons: Btn[] = [{ label: 'New game (N)', key: 'n', run: () => location.reload(), enabled: () => true }];
 
 // ---------- battle refresh: derive all view data from state ----------
 
@@ -431,9 +438,19 @@ function enterWorld(): void {
   worldCanvas.hidden = false;
   logEl.innerHTML = '';
   for (const t of world.log.slice(-40)) appendWorldLog(t);
-  setButtons(worldButtons);
+  setButtons(over ? gameOverButtons : worldButtons);
   lastWorldSig = '';
   updateWorldPanel();
+}
+
+/** The run ends if the protagonist has fallen or nobody is left. Logs it and returns true the moment that happens. */
+function checkGameOver(): boolean {
+  if (over) return true;
+  over = gameOverReason(world.roster);
+  if (!over) return false;
+  const leader = world.roster.find((m) => m.protagonist)?.name ?? 'The leader';
+  worldLog(over === 'protagonist-fell' ? `${leader} didn't make it. Game over.` : 'Nobody is left standing. Game over.');
+  return true;
 }
 
 /** Return from a finished fight: rewards on victory, back to camp (minus some scrap) on defeat. */
@@ -445,7 +462,10 @@ function finishBattle(): void {
     if (ctx.site) world.cleared[ctx.site.id] = true;
     world.scrap += ctx.reward;
     worldLog(`${ctx.label}: victory. +${ctx.reward} scrap.`);
+  } else if (gameOverReason(world.roster)) {
+    worldLog(`${ctx.label}: defeat.`); // a wipe: nobody left to drag themselves home
   } else {
+    // Only reachable if something spared the downed (see fateOfDowned): the survivors retreat to camp.
     const loss = Math.floor(world.scrap / 4);
     world.scrap -= loss;
     const camp = siteById('camp');
@@ -454,6 +474,7 @@ function finishBattle(): void {
     worldLog(`${ctx.label}: defeat. The squad drags itself back to camp${loss > 0 ? ` and loses ${loss} scrap` : ''}.`);
   }
   for (const note of report.notes) worldLog(note);
+  checkGameOver();
   enterWorld();
 }
 
@@ -462,8 +483,9 @@ function retreat(): void {
   const ctx = battleCtx;
   if (ctx && !ctx.sandbox && !state.winner) {
     worldLog(`${ctx.label}: you pull back without finishing it.`);
-    // Wounds and anyone who went down still count; XP and injury recovery do not (see applyBattleResult).
+    // Anyone who already went down is still lost, and wounds carry over; XP and injury recovery do not (see applyBattleResult).
     for (const note of applyBattleResult(world.roster, state, world).notes) worldLog(note);
+    checkGameOver();
   }
   enterWorld();
 }
@@ -502,7 +524,7 @@ function siteScenario(site: Site): Scenario {
 }
 
 function enterSite(site: Site | null): void {
-  if (mode !== 'world') return;
+  if (mode !== 'world' || over) return;
   if (!site) {
     worldLog('There is nothing to enter here.');
     return;
@@ -542,6 +564,12 @@ function memberTags(m: RosterMember): string {
 
 function rosterHtml(roster: RosterMember[]): string {
   const rows = roster.map((m) => {
+    if (m.dead) {
+      return (
+        `<div style="margin-top:4px;opacity:.6"><b>${m.name}</b> <span style="opacity:.7">${CLIQUES[m.clique].label} Lv ${m.level}</span> ` +
+        `&mdash; <span style="color:#e0674e">fallen</span></div>`
+      );
+    }
     const max = effectiveStats(m).hp;
     const need = xpToNext(m.level);
     const xp = Number.isFinite(need) ? `XP ${m.xp}/${need}` : 'max level';
@@ -555,7 +583,7 @@ function rosterHtml(roster: RosterMember[]): string {
 }
 
 const rosterSig = (roster: RosterMember[]): string =>
-  roster.map((m) => [m.hp, m.level, m.xp, m.traits.join(), m.injuries.map((i) => `${i.id}${i.left}`).join()].join(':')).join('|');
+  roster.map((m) => [m.dead, m.hp, m.level, m.xp, m.traits.join(), m.injuries.map((i) => `${i.id}${i.left}`).join()].join(':')).join('|');
 
 // ---------- world panel ----------
 
@@ -566,9 +594,20 @@ function updateWorldPanel(): void {
   const site = siteNear(world.pos);
   const clearable = WORLD.sites.filter((s) => s.difficulty);
   const done = clearable.filter((s) => world.cleared[s.id]).length;
-  const sig = [region.id, site?.id ?? '-', site ? !!world.cleared[site.id] : '', world.scrap, done, rosterSig(world.roster)].join('|');
+  const sig = [region.id, site?.id ?? '-', site ? !!world.cleared[site.id] : '', world.scrap, done, rosterSig(world.roster), over ?? ''].join('|');
   if (sig === lastWorldSig) return;
   lastWorldSig = sig;
+
+  if (over) {
+    const leader = world.roster.find((m) => m.protagonist)?.name ?? 'The leader';
+    const why = over === 'protagonist-fell' ? `${leader} didn't make it.` : 'Nobody is left standing.';
+    panel.innerHTML =
+      `<h2>The Island</h2>` +
+      `<div style="margin-top:8px;padding:6px 8px;border-left:3px solid #e0674e;background:#2a1a1a;color:#e0674e"><b>GAME OVER</b><br>${why}</div>` +
+      rosterHtml(world.roster);
+    renderActions(undefined);
+    return;
+  }
 
   const danger = region.danger === 0 ? 'safe' : '●'.repeat(region.danger) + '○'.repeat(4 - region.danger);
   const lines: string[] = [];
@@ -642,7 +681,7 @@ worldCanvas.addEventListener('mouseleave', () => {
   worldView.hover = null;
 });
 worldCanvas.addEventListener('click', (e) => {
-  if (mode !== 'world') return;
+  if (mode !== 'world' || over) return;
   const p = worldRenderer.toWorld(e.clientX, e.clientY);
   if (!p) return;
   // Clicking a site's ring heads for its centre.
@@ -657,7 +696,7 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
 
   if (mode === 'world') {
-    if (MOVE_KEYS[k]) {
+    if (MOVE_KEYS[k] && !over) {
       e.preventDefault();
       heldKeys.add(k);
       return;
@@ -693,7 +732,7 @@ function frame(now: number): void {
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
   if (mode === 'world') {
-    const ev = stepWorld(world, dt, heldInput());
+    const ev = over ? null : stepWorld(world, dt, heldInput());
     if (ev) randomEncounter(ev.region);
     else {
       updateWorldPanel();
@@ -716,6 +755,9 @@ if (params.has('debug')) {
       },
       get state() {
         return state;
+      },
+      get over() {
+        return over;
       },
       enterSite: (id: string) => enterSite(siteById(id) ?? null),
       encounter: () => randomEncounter(regionAt(world.pos)),

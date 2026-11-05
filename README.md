@@ -59,18 +59,24 @@ The painted map in `public/worldmap.png` is the playfield. Everything the code n
 
 **Generated battles** (`encounterScenario`): 30x18, per-biome clutter profile, squad on the left, pods always placed outside sight range (every fight starts with a search, so the contact hint matters), corridors carved if anything ended up walled off, stats and weapons scaled by difficulty.
 
-Defeat sends the squad back to camp minus a quarter of its scrap, and everyone who went down comes back injured (see below).
+Permadeath is on: anyone who goes down in a fight is gone for good, so a defeat (everyone down) ends the run (see below).
 
 ## Squad and progression
 
 Your four friends are a persistent roster (`src/engine/roster.ts`), not a fresh squad each fight.
 
-- **Cliques** (Scout, Jock, Nerd, Drama kid) set level-1 stats, starting weapon and per-level growth. Level-1 stats match the original hand-built squad exactly; a test guards that.
+- **The squad.** Amy (Popular, the player character), Scott (Jock), Tyson (Nerd) and Anna (Drama kid). Cliques set level-1 stats, starting weapon and per-level growth. Level-1 stats match the original hand-built squad exactly; a test guards that.
 - **Levelling.** A fight earns 8 XP for taking part, +2 per hit, +12 per kill, +10 for winning. Level *n* needs 40*n* XP; the cap is level 6. A level-up adds the clique's growth and heals the max HP it adds. Levels 2 and 4 grant a random trait (Sure-footed, Eagle-eyed, Tough, Thick-skinned, Jumpy, Showboat), each a flat stat tweak.
 - **HP carries over.** Survivors keep the HP they finished with. Press `E` at camp to restore everyone to full.
-- **Going down isn't dying.** A unit that falls comes back at 1 HP with an injury (twisted ankle, concussion, cracked ribs, shaken up), each a temporary stat penalty. At most two at once; a third replaces whichever is closest to healing.
+- **Permadeath.** A unit that goes down in a fight is dead for good, including if you retreat afterwards (it fell before you pulled out). The fallen stay on the squad panel as a reminder and never deploy again, so retreating is how you save the survivors.
+- **Game over.** The run ends when Amy falls, or when nobody is left. Play stops and only "New game" works.
+- **Softening it later.** `fateOfDowned` (in `roster.ts`) is the one place that decides what going down costs. A future skill, item or story beat can return `'injured'` for a given unit and it will come back at 1 HP with a serious injury instead (twisted ankle, concussion, cracked ribs, shaken up: each a temporary stat penalty, at most two at once). That machinery is built and tested but nothing triggers it yet.
 - **Injuries heal by fighting.** Every victory or defeat ticks every injury down by one fight. Resting at camp doesn't cure them, and retreating gives no XP and heals nothing, so neither can be farmed.
 - Sandbox battles use the stock squad and change nothing.
+
+### Character art
+
+Drop `amy.png`, `scott.png`, `tyson.png`, `anna.png` (lowercase unit name, PNG or WebP) into `src/assets/sprites/` and that unit is drawn with it on the battle board instead of a coloured circle. No code change needed; units without a file keep their circle. The spec is in `src/assets/sprites/README.md`.
 
 Stats are always derived (clique + level + traits + injuries, with floors), never stored, and the roster is plain JSON on `world.roster`, so it will save with the world once saving exists.
 
@@ -105,7 +111,8 @@ src/world/    the free-roam layer (also pure logic, no DOM, except render.ts)
   worlddata.json  coast, regions, sites for the painted map
   world.ts      walk grid, A* + string-pulling, sliding movement, danger-weighted encounters
   render.ts     draws the map, sites, party, route
-src/render/   canvas board renderer (terrain, fog, overlays, hint arrow, effects)
+src/render/   canvas board renderer (terrain, fog, overlays, hint arrow, effects, optional character sprites)
+src/assets/sprites/   drop-in character art, picked up automatically by name
 src/main.ts   mode switch (world <-> battle), input, panels, log, enemy-phase pacing
 ```
 
