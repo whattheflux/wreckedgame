@@ -44,7 +44,7 @@ import { rand } from './engine/rng';
 import { esc, hideOverlay, overlayOpen, showCreate, showPrep, showTitle } from './ui/screens';
 import { clearSave, loadGame, saveGame } from './world/save';
 import { BoardRenderer, type ViewState } from './render/board';
-import { preloadArt } from './render/sprites';
+import { koUrl, preloadArt, spriteUrl } from './render/sprites';
 import { preloadTerrain } from './render/terrain';
 import { WorldRenderer, type WorldView } from './world/render';
 import {
@@ -64,6 +64,7 @@ const worldCanvas = document.getElementById('world') as HTMLCanvasElement;
 const panel = document.getElementById('panel') as HTMLDivElement;
 const actions = document.getElementById('actions') as HTMLDivElement;
 const logEl = document.getElementById('log') as HTMLDivElement;
+const rosterEl = document.getElementById('roster') as HTMLDivElement;
 const renderer = new BoardRenderer(canvas);
 // The squad's art is tiny next to a battle's worth of rivals: have it ready before the first fight.
 void preloadArt(['pc-male', 'pc-female', 'amy', 'scott', 'tyson', 'anna']);
@@ -186,18 +187,66 @@ function playEffects(events: BattleEvent[]): void {
   }
 }
 
-function select(id: string | null): void {
+function select(id: string | null, snap = false): void {
   view.selectedId = id;
   view.mode = 'move';
+  focusSelected(snap);
   refresh();
 }
 
-function selectNext(): void {
-  const ready = living(state, 'player').filter((u) => u.ap > 0);
-  if (ready.length === 0) return;
-  const cur = ready.findIndex((u) => u.id === view.selectedId);
-  select(ready[(cur + 1) % ready.length].id);
+/** Ease the camera onto the selected unit (no-op with nothing selected). */
+function focusSelected(snap = false): void {
+  const u = selected();
+  if (u) renderer.focus(u.pos, snap);
 }
+
+/** Tab / Shift+Tab: step through the whole squad in roster order, spent units included. */
+function selectNext(step = 1): void {
+  const squad = living(state, 'player');
+  if (squad.length === 0) return;
+  const cur = squad.findIndex((u) => u.id === view.selectedId);
+  const i = cur < 0 ? (step > 0 ? 0 : squad.length - 1) : (cur + step + squad.length) % squad.length;
+  select(squad[i].id);
+}
+
+// ---------- squad bar (left side) ----------
+
+let squadSig = '';
+
+function renderRoster(): void {
+  const squad = state.units.filter((u) => u.team === 'player' && (u.alive || u.downed));
+  const sig = squad.map((u) => `${u.id}:${u.hp}:${u.ap}:${u.alive ? 1 : 0}:${u.id === view.selectedId ? 1 : 0}`).join('|');
+  if (sig === squadSig) return;
+  squadSig = sig;
+  rosterEl.innerHTML = squad
+    .map((u, n) => {
+      const down = !u.alive;
+      const key = u.sprite ?? u.name.toLowerCase();
+      const url = down ? (koUrl(key) ?? spriteUrl(key, 'down')) : spriteUrl(key, 'down');
+      const face = url ? `<img src="${url}" alt="">` : `<div class="ph">${esc(u.name.slice(0, 1))}</div>`;
+      const pct = Math.max(0, Math.round((u.hp / u.maxHp) * 100));
+      const pips = Array.from({ length: u.maxAp }, (_, i) => `<b class="${i < u.ap ? 'on' : ''}"></b>`).join('');
+      const cls = ['rc', u.id === view.selectedId ? 'sel' : '', down ? 'down' : '', !down && u.ap <= 0 ? 'spent' : ''].join(' ');
+      return (
+        `<div class="${cls}" data-id="${esc(u.id)}" title="${esc(u.name)} (${esc(u.role)})">` +
+        `<span class="key">${n + 1}</span><div class="face">${face}</div><div class="nm">${esc(u.name)}</div>` +
+        (down
+          ? `<div class="tag">DOWN</div>`
+          : `<div class="bar"><i class="${pct <= 33 ? 'low' : ''}" style="width:${pct}%"></i></div><div class="pips">${pips}</div>`) +
+        `</div>`
+      );
+    })
+    .join('');
+}
+
+rosterEl.addEventListener('click', (e) => {
+  const card = (e.target as HTMLElement).closest<HTMLElement>('.rc');
+  if (!card || mode !== 'battle' || overlayOpen()) return;
+  const u = getUnit(state, card.dataset.id ?? '');
+  if (!u) return;
+  if (u.alive && canAct()) select(u.id);
+  else renderer.focus(u.pos); // a downed friend or mid-enemy-turn: just look
+});
 
 // ---------- buttons (rebuilt per mode) ----------
 
@@ -278,6 +327,7 @@ function refresh(): void {
   }
 
   flushLog();
+  renderRoster();
   renderPanel(sel);
   renderActions(sel);
 }
@@ -386,6 +436,7 @@ function afterPlayerAction(): void {
     const next = living(state, 'player').find((u) => u.ap > 0);
     view.selectedId = next ? next.id : null;
   }
+  focusSelected();
   refresh();
 }
 
@@ -430,15 +481,29 @@ function startEnemyPhase(): void {
       if (!state.winner) {
         const first = living(state, 'player').find((u) => u.ap > 0);
         view.selectedId = first ? first.id : null;
+        focusSelected();
       }
       refresh();
       return;
     }
     playEffects(ev);
+    followEnemy(ev);
     refresh();
     window.setTimeout(tick, ev.length > 0 ? 650 : 100);
   };
   window.setTimeout(tick, 450);
+}
+
+/** During the rival phase, keep the camera on whoever just acted if we can see them. */
+function followEnemy(events: BattleEvent[]): void {
+  for (const ev of events) {
+    const id = ev.type === 'move' ? ev.unitId : ev.type === 'shoot' ? ev.attackerId : null;
+    const u = id ? getUnit(state, id) : undefined;
+    if (u && u.team === 'enemy' && seen(u.pos)) {
+      renderer.focus(u.pos);
+      return;
+    }
+  }
 }
 
 function restart(nextMap = false): void {
@@ -469,6 +534,9 @@ function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
   setButtons(battleButtons);
   const first = living(state, 'player')[0];
   if (first) view.selectedId = first.id;
+  squadSig = '';
+  rosterEl.hidden = false;
+  focusSelected(true);
   toast(ctx.label);
   refresh();
 }
@@ -517,6 +585,7 @@ function enterWorld(): void {
   busy = false;
   canvas.hidden = true;
   worldCanvas.hidden = false;
+  rosterEl.hidden = true;
   logEl.innerHTML = '';
   for (const t of world.log.slice(-40)) appendWorldLog(t);
   setButtons(over ? gameOverButtons : worldButtons);
@@ -790,12 +859,17 @@ window.addEventListener('keydown', (e) => {
 
   if (k === 'tab') {
     e.preventDefault();
-    if (canAct()) selectNext();
+    if (canAct()) selectNext(e.shiftKey ? -1 : 1);
     return;
   }
   if (/^[1-9]$/.test(k) && canAct()) {
     const u = living(state, 'player')[Number(k) - 1];
     if (u) select(u.id);
+    return;
+  }
+  if (k === 'z' && mode === 'battle') {
+    renderer.toggleZoom();
+    focusSelected();
     return;
   }
   const b = currentButtons.find((x) => x.key === k);

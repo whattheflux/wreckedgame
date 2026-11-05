@@ -12,6 +12,26 @@
       canvas { display: block; width: 100%; height: 100%; }
       canvas[hidden] { display: none; }
       #world { cursor: crosshair; }
+      #roster { width: 132px; display: flex; flex-direction: column; gap: 8px; padding: 10px 8px; overflow-y: auto; border-right: 1px solid #22303c; background: #0e161e; }
+      #roster[hidden] { display: none; }
+      #roster .rc { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 6px 7px; border: 2px solid #22303c; border-radius: 6px; background: #14202b; color: #d7e0e8; cursor: pointer; font-size: 12px; text-align: center; }
+      #roster .rc:hover { background: #1a2a38; }
+      #roster .rc.sel { border-color: #e8b04a; background: #2a2616; box-shadow: 0 0 0 2px rgba(232, 176, 74, 0.35), 0 0 14px rgba(232, 176, 74, 0.45); }
+      #roster .rc.sel::before { content: ''; position: absolute; left: -8px; top: 50%; margin-top: -6px; border: 6px solid transparent; border-left-color: #e8b04a; border-right: 0; }
+      #roster .rc.spent { opacity: 0.6; }
+      #roster .rc.down { border-color: #7a2c2c; background: #2a1a1a; }
+      #roster .face { width: 64px; height: 64px; border-radius: 4px; overflow: hidden; background: #0b1117; position: relative; }
+      #roster .face img { position: absolute; left: 50%; top: 0; width: 100%; transform: translateX(-50%) scale(1.7); transform-origin: 50% 8%; image-rendering: auto; }
+      #roster .face .ph { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 24px; opacity: 0.6; }
+      #roster .nm { font-weight: 600; line-height: 1.15; word-break: break-word; }
+      #roster .key { position: absolute; top: 3px; left: 5px; font-size: 10px; opacity: 0.55; }
+      #roster .bar { width: 100%; height: 5px; background: #0b1117; border-radius: 3px; overflow: hidden; }
+      #roster .bar i { display: block; height: 100%; background: #5fbf6a; }
+      #roster .bar i.low { background: #e0674e; }
+      #roster .pips { display: flex; gap: 3px; height: 7px; }
+      #roster .pips b { width: 9px; height: 7px; border-radius: 2px; background: #2f4352; }
+      #roster .pips b.on { background: #7ec4e8; }
+      #roster .tag { font-size: 10px; font-weight: 700; color: #e0674e; letter-spacing: 0.06em; }
       #side { width: 300px; display: flex; flex-direction: column; border-left: 1px solid #22303c; background: #101a23; }
       #panel { padding: 12px; border-bottom: 1px solid #22303c; font-size: 13px; line-height: 1.5; }
       #panel h2 { margin: 0 0 6px; font-size: 14px; }
@@ -49,6 +69,7 @@
   </head>
   <body>
     <div id="app">
+      <div id="roster" hidden></div>
       <div id="stage"><canvas id="board" hidden></canvas><canvas id="world"></canvas><div id="overlay" hidden></div></div>
       <div id="side">
         <div id="panel"></div>

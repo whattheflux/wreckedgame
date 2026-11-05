@@ -45,6 +45,7 @@ npm run build    # typecheck + production build
 - 2 AP per unit per turn. Moving up to `mobility` tiles costs 1 AP, up to double costs 2 (dash).
 - Cover is directional: a half/full cover object only counts if it sits between the target and the attacker. Half = -20 hit, full = -40.
 - A target hugging cover but shot from an uncovered side is **flanked**: the cover penalty is gone and any hit is a guaranteed crit (+50% damage). Range falloff still applies, so a long flank shot can miss; if it lands, it crits. The same goes for the enemy flanking you. A target in the open (no cover at all) is **exposed**: not a guaranteed crit, but +15% crit chance (`EXPOSED_CRIT_BONUS`).
+- Squad bar: the left side shows each squad member's face, name, HP and AP; click one, press 1-9, or Tab / Shift+Tab to select them and the camera eases onto them (Z toggles zoomed-in and whole-map view).
 - On the board: hovering an enemy shows a tooltip (hit, crit, damage, range falloff, cover). Selecting a unit draws its weapon range as rings, green for full accuracy and dashed amber for maximum range. Enemies show a shield for cover (solid = full, half-filled = half) or a red broken shield when flanked, and reachable tiles show the cover you would get there. Hover a reachable tile to see the range rings and hit chances from it.
 - Walls block line of sight; cover objects can be shot over. Water is impassable.
 - Hit chance = aim + weapon mod - defense - cover - range falloff (4% per tile past optimal), clamped 5-95.

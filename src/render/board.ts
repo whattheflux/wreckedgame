@@ -48,6 +48,11 @@ export class BoardRenderer {
   private tile = 32;
   private ox = 0;
   private oy = 0;
+  /** Camera: `zoom` multiplies the fit-to-window tile size; the view eases toward `goal` (tile coordinates). */
+  private zoom = 1.5;
+  private cam: { x: number; y: number } | null = null;
+  private goal = { x: 0, y: 0 };
+  private lastLayout = performance.now();
   private effects: Effect[] = [];
   /** which way each unit last moved or fired; purely visual, so it lives here and not in the game state */
   private facing = new Map<string, Dir>();
@@ -62,6 +67,18 @@ export class BoardRenderer {
   face(unitId: string, from: Pos, to: Pos): void {
     const d = dirFromDelta(to.x - from.x, to.y - from.y);
     if (d) this.facing.set(unitId, d);
+  }
+
+  /** Centre the camera on a tile; `snap` jumps there instead of easing. */
+  focus(p: Pos, snap = false): void {
+    this.goal = { x: p.x + 0.5, y: p.y + 0.5 };
+    if (snap || !this.cam) this.cam = { ...this.goal };
+  }
+
+  /** Flip between the zoomed-in follow camera and the whole-map view. Returns true when zoomed in. */
+  toggleZoom(): boolean {
+    this.zoom = this.zoom > 1 ? 1 : 1.5;
+    return this.zoom > 1;
   }
 
   resetFacing(): void {
@@ -107,9 +124,23 @@ export class BoardRenderer {
       this.canvas.height = Math.round(h * dpr);
     }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.tile = Math.max(12, Math.floor(Math.min(w / state.map.width, h / state.map.height)));
-    this.ox = Math.floor((w - this.tile * state.map.width) / 2);
-    this.oy = Math.floor((h - this.tile * state.map.height) / 2);
+    const fit = Math.floor(Math.min(w / state.map.width, h / state.map.height));
+    this.tile = Math.max(12, Math.round(fit * this.zoom));
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - this.lastLayout) / 1000);
+    this.lastLayout = now;
+    if (!this.cam) this.cam = { x: state.map.width / 2, y: state.map.height / 2 };
+    const k = 1 - Math.exp(-dt * 9);
+    this.cam.x += (this.goal.x - this.cam.x) * k;
+    this.cam.y += (this.goal.y - this.cam.y) * k;
+    // Centre on the camera, but never show void past the map edge; a map smaller than the window just sits centred.
+    const axis = (len: number, tiles: number, c: number): number => {
+      const px = tiles * this.tile;
+      if (px <= len) return Math.floor((len - px) / 2);
+      return Math.round(Math.min(0, Math.max(len - px, len / 2 - c * this.tile)));
+    };
+    this.ox = axis(w, state.map.width, this.cam.x);
+    this.oy = axis(h, state.map.height, this.cam.y);
     return { w, h };
   }
 
