@@ -1,7 +1,7 @@
 import type { GameState, Pos, Unit } from '../engine/types';
 import { coverAgainst, dist, posKey, type PathNode } from '../engine/grid';
 import type { Hint } from '../engine/hint';
-import { computeShot, type ShotPreview } from '../engine/combat';
+import { computeShot, EXPOSED_CRIT_BONUS, type ShotPreview } from '../engine/combat';
 import { dirFromDelta, koUrl, loadedImage, spriteUrl, type Dir } from './sprites';
 import { terrainImage } from './terrain';
 
@@ -623,7 +623,7 @@ export class BoardRenderer {
           : { text: `Range ${pv.distance.toFixed(1)}: full accuracy`, color: '#8fe0a0' },
       );
       if (pv.flanked) lines.push({ text: 'FLANKED: a hit is a guaranteed crit', color: '#ff8a70', bold: true });
-      else if (pv.cover === 'none') lines.push({ text: 'No cover', color: '#d7e0e8' });
+      else if (pv.cover === 'none') lines.push({ text: `EXPOSED: no cover, +${EXPOSED_CRIT_BONUS}% crit`, color: '#ffb347', bold: true });
       else lines.push({ text: `${pv.cover === 'full' ? 'Full' : 'Half'} cover: -${pv.coverPenalty}`, color: '#9fd4ff' });
     } else if (pv.reason === 'Out of range') {
       lines.push({ text: 'OUT OF RANGE', color: '#ff8a70', bold: true });

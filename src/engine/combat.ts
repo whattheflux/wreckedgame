@@ -6,6 +6,8 @@ export const COVER_PENALTY: Record<CoverType, number> = { none: 0, half: 20, ful
 export const OVERWATCH_PENALTY = 15;
 /** A flanked target (hugging cover, but not on the side you are shooting from) is crit-certain: if the shot lands, it crits. */
 export const FLANK_CRIT_CHANCE = 100;
+/** A target with no cover against you at all (and nothing to flank) is easier to hurt badly: +crit points. */
+export const EXPOSED_CRIT_BONUS = 15;
 export const RANGE_PENALTY_PER_TILE = 4;
 
 export type Shooter = Pick<Unit, 'aim' | 'critChance' | 'weapon'>;
@@ -18,6 +20,8 @@ export interface ShotPreview {
   critChance: number;
   cover: CoverType;
   flanked: boolean;
+  /** no cover against this shooter and not flanked: standing in the open, so the crit chance gets EXPOSED_CRIT_BONUS */
+  exposed: boolean;
   dmgMin: number;
   dmgMax: number;
   distance: number;
@@ -43,10 +47,12 @@ export function computeShot(
   const distance = dist(from, target.pos);
   const cover = coverAgainst(map, from, target.pos);
   const flanked = isFlanked(map, from, target.pos);
+  const exposed = cover === 'none' && !flanked;
   const rangePenalty = Math.max(0, distance - w.optimal) * RANGE_PENALTY_PER_TILE;
   const base = {
     cover,
     flanked,
+    exposed,
     dmgMin: w.damage[0],
     dmgMax: w.damage[1],
     distance,
@@ -63,7 +69,7 @@ export function computeShot(
 
   const hit =
     shooter.aim + w.aimMod - target.defense - COVER_PENALTY[cover] - rangePenalty - (overwatch ? OVERWATCH_PENALTY : 0);
-  const crit = flanked ? FLANK_CRIT_CHANCE : shooter.critChance + w.critMod;
+  const crit = flanked ? FLANK_CRIT_CHANCE : shooter.critChance + w.critMod + (exposed ? EXPOSED_CRIT_BONUS : 0);
 
   return {
     ...base,

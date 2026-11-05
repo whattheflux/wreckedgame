@@ -5,6 +5,7 @@ import {
   coverAgainst,
   createBattle,
   enemyStep,
+  EXPOSED_CRIT_BONUS,
   hasLineOfSight,
   isFlanked,
   moveUnit,
@@ -111,6 +112,25 @@ describe('shot maths', () => {
     expect(head.flanked).toBe(false);
     expect(head.critChance).toBe(5);
     expect(head.coverPenalty).toBe(20);
+  });
+
+  it('a target standing in the open is exposed: a crit bonus, but never as good as a flank', () => {
+    const plain = parseMap(['.......', '.......', '.......']);
+    const crate = parseMap(['.......', '..h....', '.......']);
+    const target = { defense: 0, pos: { x: 3, y: 1 }, hp: 10 };
+    const gun = { ...shooter, critChance: 10, weapon: { ...shooter.weapon, critMod: 0, range: 20 } };
+    const inOpen = computeShot(plain, gun, { x: 6, y: 1 }, target);
+    expect(inOpen.exposed).toBe(true);
+    expect(inOpen.flanked).toBe(false);
+    expect(inOpen.critChance).toBe(10 + EXPOSED_CRIT_BONUS);
+    expect(inOpen.critChance).toBeLessThan(computeShot(crate, gun, { x: 6, y: 1 }, target).critChance); // the flank
+    // covered from this side: ordinary crit, not exposed
+    const covered = computeShot(crate, gun, { x: 0, y: 1 }, target);
+    expect(covered.exposed).toBe(false);
+    expect(covered.critChance).toBe(10);
+    // a flank is not also "exposed" (no double counting)
+    const flank = computeShot(crate, gun, { x: 6, y: 1 }, target);
+    expect(flank).toMatchObject({ flanked: true, exposed: false, critChance: 100 });
   });
 
   it('reports the weapon range and the parts of the hit chance for tooltips', () => {
