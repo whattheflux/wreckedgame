@@ -2,7 +2,8 @@ import type { Biome, GameMap, Pos, Terrain, Weapon } from './types';
 import type { Scenario, UnitSpec } from './battle';
 import { buildMap, foe, squadAt, WEAPONS } from './scenarios';
 import { SIGHT_RANGE } from './vision';
-import { randInt, rand, type RngHolder } from './rng';
+import { randInt, type RngHolder } from './rng';
+import { rivalCrew } from './rivals';
 
 export const ENCOUNTER_W = 30;
 export const ENCOUNTER_H = 18;
@@ -37,11 +38,6 @@ export const PROFILES: Record<Biome, Profile> = {
   canyon: { walls: [4, 3], half: 18, full: 10, water: [0, 0], rim: 'canyon' },
   volcano: { walls: [10, 3], half: 14, full: 12, water: [6, 3] },
 };
-
-const NAMES = [
-  'Brock', 'Tyler', 'Dane', 'Cole', 'Reid', 'Chad', 'Troy', 'Wade', 'Kyle', 'Jace', 'Nate', 'Rhett',
-  'Colt', 'Grant', 'Hunter', 'Blake', 'Axel', 'Dex', 'Boone', 'Flint', 'Garrett', 'Heath', 'Jett', 'Knox',
-];
 
 /** Pod members sit in a tight cluster around the pod centre. */
 const CLUSTER: Array<[number, number]> = [[0, 0], [1, 0], [0, 1], [1, 1], [-1, 0], [0, -1], [-1, 1], [2, 0]];
@@ -129,11 +125,7 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
 
   const spawnTiles: Pos[] = [...squadPos.map(([x, y]) => ({ x, y }))];
   const units: UnitSpec[] = [];
-  const names = [...NAMES];
-  for (let i = names.length - 1; i > 0; i--) {
-    const j = Math.floor(rand(rng) * (i + 1));
-    [names[i], names[j]] = [names[j], names[i]];
-  }
+  const crew = rivalCrew(opts.seed, pods * podSize);
 
   let n = 0;
   podCentres.forEach((c, pi) => {
@@ -144,7 +136,12 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
       spawnTiles.push(pos);
       n++;
       const weapon = weaponFor(diff, m + pi);
-      units.push(foe(`e${n}`, names[(n - 1) % names.length], pos.x, pos.y, podId, weapon, 7 + diff + (weapon === WEAPONS.pole ? 2 : 0), 52 + diff * 4));
+      const kid = crew.members[n - 1];
+      units.push({
+        ...foe(`e${n}`, kid.name, pos.x, pos.y, podId, weapon, 7 + diff + (weapon === WEAPONS.pole ? 2 : 0), 52 + diff * 4),
+        role: kid.role,
+        sprite: kid.sprite,
+      });
     }
   });
 
@@ -207,7 +204,7 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) reach[y][x] = again[y][x];
   }
 
-  const name = `${opts.biome[0].toUpperCase()}${opts.biome.slice(1)} skirmish`;
+  const name = `${crew.school}: ${opts.biome} skirmish`;
   return {
     name,
     seed: (opts.seed ^ 0x5bd1e995) | 0,
