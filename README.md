@@ -81,7 +81,7 @@ You and your friends are a persistent roster (`src/engine/roster.ts`), not a fre
 
 ### Character art
 
-Drop `amy.png`, `scott.png`, `tyson.png`, `anna.png` (lowercase unit name, PNG or WebP) into `src/assets/sprites/` and that unit is drawn with it on the battle board instead of a coloured circle. No code change needed; units without a file keep their circle. The spec is in `src/assets/sprites/README.md`.
+Art is optional and picked up by name from `src/assets/sprites/`: a single image per unit (`amy.png`), or a folder with up to eight facings (`pc-male/down-left.png`, ...). Units turn to face their last move or target. The player character picks a boy or girl look at creation, which selects `pc-male` or `pc-female`. Units without art keep their circle. The spec is in `src/assets/sprites/README.md`.
 
 Stats are always derived (clique + class + level + traits + injuries, with floors), never stored, and the roster is plain JSON on `world.roster`, which is what the autosave stores.
 

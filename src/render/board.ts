@@ -2,6 +2,7 @@ import type { Biome, GameState, Pos, Terrain, Unit } from '../engine/types';
 import { coverAgainst, dist, posKey, type PathNode } from '../engine/grid';
 import type { Hint } from '../engine/hint';
 import { computeShot, type ShotPreview } from '../engine/combat';
+import { dirFromDelta, loadedImage, spriteUrl, type Dir } from './sprites';
 
 export interface ViewState {
   selectedId: string | null;
@@ -49,29 +50,10 @@ const BIOME_WATER: Partial<Record<Biome, string>> = { marsh: '#1f4a45', volcano:
 
 const TEAM_COLOR = { player: '#3d8fc2', enemy: '#c2503d' } as const;
 
-/**
- * Optional character art. Drop `<unit name, lowercase>.png` (or .webp) into src/assets/sprites/ and
- * that unit is drawn with it instead of a coloured circle. Vite bundles whatever is in the folder at
- * build time, so no request is ever made for art that doesn't exist.
- */
-const SPRITE_URLS = import.meta.glob('../assets/sprites/*.{png,webp}', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
-const SPRITE_BY_NAME = new Map<string, string>(
-  Object.entries(SPRITE_URLS).map(([path, url]) => [path.replace(/^.*\//, '').replace(/\.(png|webp)$/, ''), url]),
-);
-const spriteImages = new Map<string, HTMLImageElement>();
-
-/** The unit's sprite once it has loaded, else null (draw the circle). */
-function spriteFor(u: Unit): HTMLImageElement | null {
-  const key = u.name.toLowerCase();
-  const url = SPRITE_BY_NAME.get(key);
-  if (!url) return null;
-  let img = spriteImages.get(key);
-  if (!img) {
-    img = new Image();
-    img.src = url;
-    spriteImages.set(key, img);
-  }
-  return img.complete && img.naturalWidth > 0 ? img : null;
+/** The unit's art for the way it is facing once it has loaded, else null (draw the circle). */
+function spriteFor(u: Unit, facing: Dir): HTMLImageElement | null {
+  const url = spriteUrl(u.sprite ?? u.name.toLowerCase(), facing);
+  return url ? loadedImage(url) : null;
 }
 
 export class BoardRenderer {
@@ -80,11 +62,27 @@ export class BoardRenderer {
   private ox = 0;
   private oy = 0;
   private effects: Effect[] = [];
+  /** which way each unit last moved or fired; purely visual, so it lives here and not in the game state */
+  private facing = new Map<string, Dir>();
 
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2D canvas not available');
     this.ctx = ctx;
+  }
+
+  /** Turn a unit toward `to` (a move step or a target); no-op if the points coincide. */
+  face(unitId: string, from: Pos, to: Pos): void {
+    const d = dirFromDelta(to.x - from.x, to.y - from.y);
+    if (d) this.facing.set(unitId, d);
+  }
+
+  resetFacing(): void {
+    this.facing.clear();
+  }
+
+  private facingOf(u: Unit): Dir {
+    return this.facing.get(u.id) ?? (u.team === 'player' ? 'right' : 'left');
   }
 
   addTextEffect(at: Pos, text: string, color: string, ttl = 1500): void {
@@ -493,9 +491,9 @@ export class BoardRenderer {
     const isSel = u.id === view.selectedId;
     const exhausted = u.team === 'player' && state.active === 'player' && u.ap <= 0;
 
-    const art = spriteFor(u);
+    const art = spriteFor(u, this.facingOf(u));
     const feetY = c.y + tile * 0.42;
-    const artH = tile * 1.3;
+    const artH = tile * 1.6;
 
     if (art) {
       // Character art: a team-coloured base at the feet (so friend and foe read at a glance), then the sprite.

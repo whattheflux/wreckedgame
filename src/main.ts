@@ -155,6 +155,11 @@ function playEffects(events: BattleEvent[]): void {
   // Visibility is refreshed first so a pod that just woke is already drawn when its flash appears.
   view.visible = visibleTiles(state);
   for (const ev of events) {
+    if (ev.type === 'move') {
+      const last = ev.path[ev.path.length - 1];
+      if (last) renderer.face(ev.unitId, ev.path.length > 1 ? ev.path[ev.path.length - 2] : ev.from, last);
+      continue;
+    }
     if (ev.type === 'reveal') {
       const first = getUnit(state, ev.unitIds[0]);
       if (first) renderer.addTextEffect(first.pos, 'CONTACT!', '#ffb347', 1800);
@@ -169,6 +174,7 @@ function playEffects(events: BattleEvent[]): void {
     const a = getUnit(state, ev.attackerId);
     const t = getUnit(state, ev.targetId);
     if (!a || !t) continue;
+    renderer.face(a.id, a.pos, t.pos);
     if (!seen(a.pos) && !seen(t.pos)) continue; // happened in the fog
     const text = ev.hit ? `${ev.crit ? 'CRIT ' : ''}-${ev.damage}` : 'MISS';
     renderer.addShotEffect(a.pos, t.pos, ev.hit, text, ev.crit);
@@ -449,6 +455,7 @@ function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
   canvas.hidden = false;
   worldCanvas.hidden = true;
   heldKeys.clear();
+  renderer.resetFacing();
   view.selectedId = null;
   view.mode = 'move';
   view.hover = null;

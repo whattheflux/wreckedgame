@@ -23,6 +23,8 @@ export interface UnitSpec {
   pod?: string;
   /** the player character: one knock-down per battle instead of dying (see resolveShot) */
   protagonist?: boolean;
+  /** key of the unit's art; see Unit.sprite */
+  sprite?: string;
 }
 
 export interface Scenario {
@@ -66,6 +68,7 @@ function spawn(s: UnitSpec): Unit {
     attacked: false,
     idleTurns: 0,
     ...(s.protagonist ? { protagonist: true } : {}),
+    ...(s.sprite ? { sprite: s.sprite } : {}),
   };
 }
 

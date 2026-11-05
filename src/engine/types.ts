@@ -67,6 +67,8 @@ export interface Unit {
   downed?: boolean;
   /** how many times this unit has gone down this battle */
   downs?: number;
+  /** key of this unit's art (a file or folder in src/assets/sprites); defaults to the lowercase name */
+  sprite?: string;
 }
 
 export type BattleEvent =

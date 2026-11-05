@@ -7,10 +7,13 @@ import {
   effectiveStats,
   newMember,
   type Clique,
+  type Look,
   type PlayerChoice,
   type RosterMember,
   type SchoolClass,
 } from '../engine';
+
+import { previewUrl } from '../render/sprites';
 
 /** Full-stage overlay screens: title, character creation, and squad pick. Plain DOM, no state beyond the screen itself. */
 
@@ -51,6 +54,7 @@ export function showTitle(opts: { canContinue: boolean; onContinue: () => void; 
 }
 
 export function showCreate(onDone: (choice: PlayerChoice) => void, initial: Partial<PlayerChoice> = {}): void {
+  let look: Look = initial.look ?? 'male';
   let clique: Clique = initial.clique ?? 'popular';
   let schoolClass: SchoolClass = initial.schoolClass ?? 'sport';
   const cliques = Object.keys(CLIQUES) as Clique[];
@@ -60,6 +64,12 @@ export function showCreate(onDone: (choice: PlayerChoice) => void, initial: Part
     `<h1>Who are you?</h1>` +
       `<p class="sub">Pick your clique and what you studied. Any combination works.</p>` +
       `<label class="field">Name <input id="ov-name" maxlength="16" value="${esc(initial.name ?? '')}" placeholder="Your name" autocomplete="off"></label>` +
+      `<h3>Look</h3><div class="grid looks" id="ov-looks">${(['male', 'female'] as Look[])
+        .map((l) => {
+          const url = previewUrl(`pc-${l}`);
+          return `<button class="choice look" data-v="${l}">${url ? `<img src="${url}" alt="" width="64" height="64">` : ''}<b>${l === 'male' ? 'Boy' : 'Girl'}</b></button>`;
+        })
+        .join('')}</div>` +
       `<h3>Clique</h3><div class="grid" id="ov-cliques">${cliques
         .map((c) => `<button class="choice" data-v="${c}"><b>${CLIQUES[c].label}</b><span>${esc(CLIQUES[c].blurb)}</span></button>`)
         .join('')}</div>` +
@@ -72,12 +82,20 @@ export function showCreate(onDone: (choice: PlayerChoice) => void, initial: Part
   const nameEl = card.querySelector('#ov-name') as HTMLInputElement;
 
   const refresh = (): void => {
+    card.querySelectorAll<HTMLButtonElement>('#ov-looks .choice').forEach((b) => b.classList.toggle('selected', b.dataset.v === look));
     card.querySelectorAll<HTMLButtonElement>('#ov-cliques .choice').forEach((b) => b.classList.toggle('selected', b.dataset.v === clique));
     card.querySelectorAll<HTMLButtonElement>('#ov-classes .choice').forEach((b) => b.classList.toggle('selected', b.dataset.v === schoolClass));
-    const m = newMember('pc', nameEl.value.trim() || 'You', clique, schoolClass, true);
+    const m = newMember('pc', nameEl.value.trim() || 'You', clique, schoolClass, true, look);
     (card.querySelector('#ov-preview') as HTMLDivElement).innerHTML =
       `<b>${esc(m.name)}</b> &mdash; ${CLIQUES[clique].label} / ${CLASSES[schoolClass].label}<br>${statLine(m)}<br>${weaponLine(m)}`;
   };
+  card.querySelector('#ov-looks')!.addEventListener('click', (e) => {
+    const v = (e.target as HTMLElement).closest<HTMLButtonElement>('.choice')?.dataset.v as Look | undefined;
+    if (v) {
+      look = v;
+      refresh();
+    }
+  });
   card.querySelector('#ov-cliques')!.addEventListener('click', (e) => {
     const v = (e.target as HTMLElement).closest<HTMLButtonElement>('.choice')?.dataset.v as Clique | undefined;
     if (v) {
@@ -93,7 +111,7 @@ export function showCreate(onDone: (choice: PlayerChoice) => void, initial: Part
     }
   });
   nameEl.addEventListener('input', refresh);
-  const go = (): void => onDone({ name: nameEl.value, clique, schoolClass });
+  const go = (): void => onDone({ name: nameEl.value, clique, schoolClass, look });
   card.querySelector('#ov-start')!.addEventListener('click', go);
   nameEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') go();

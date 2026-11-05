@@ -1,23 +1,33 @@
 # Character sprites
 
-Drop a file named after the unit (lowercase) into this folder and that unit is drawn with it on the
-battle board instead of a coloured circle:
+Art is optional, bundled at build time, and picked up by name with no code change or manifest. A unit
+with no art keeps its coloured circle, and nothing is requested for art that doesn't exist.
 
-    amy.png   scott.png   tyson.png   anna.png
+Two layouts, which can be mixed:
 
-No code change and no manifest: Vite bundles whatever is here. A unit with no file keeps its circle,
-and nothing is requested for art that doesn't exist. Enemy names work too (`brock.png`, ...).
+    amy.png                       one image, used whichever way the unit faces
+    pc-male/down-left.png ...     a folder per character, one image per facing
+
+A unit's art key is its `sprite` field if it has one, otherwise its lowercase name. Companions use
+their name (`amy`, `scott`, `tyson`, `anna`), enemies theirs (`brock`), and the player character uses
+`pc-male` or `pc-female` depending on the look picked at creation.
+
+## Facings
+
+Up to eight names per folder: `right`, `down-right`, `down`, `down-left`, `left`, `up-left`, `up`,
+`up-right` (screen directions; `up` is toward the top of the board). A unit turns to face its last
+step or its last target. Any facing you leave out falls back to the closest one you did draw, so a
+folder can start with just `down` and `up` and grow. Units start facing right (squad) or left (enemies).
 
 ## Spec
 
 - **Format:** PNG or WebP, transparent background.
-- **One image per character**, a single full-body figure. Static for now: no animation frames, and
-  no left/right variants (the same image is used however the unit is facing).
-- **Square canvas**, 256x256 recommended. It is drawn about 1.3 tiles tall (roughly 40-60 px on
-  screen), so 256 leaves headroom for the planned camera zoom. Non-square images keep their aspect.
-- **Feet on the bottom edge, horizontally centred**, with a little empty margin at the sides and top.
+- **Square canvas**, 256x256 recommended. It is drawn about 1.6 tiles tall, so the canvas leaves
+  headroom for the planned camera zoom. Non-square images keep their aspect.
+- **Feet near the bottom edge, horizontally centred**, with a little empty margin at the sides and top.
   The renderer plants the bottom edge of the image on the tile and puts a team-coloured base under it.
-- **Same scale for everyone**: size characters relative to each other on the canvas (a taller
-  character just fills more of it), rather than resizing each to fill the frame.
+  Keep any shadow soft and semi-transparent (or leave it out): the board draws its own base.
+- **Same scale for everyone**, and the same scale across all the facings of one character. Size
+  characters relative to each other on the canvas rather than resizing each to fill the frame.
 - Keep a calm, readable silhouette: the figure is small on screen, so contrast against grass, sand and
   rock matters more than fine detail.

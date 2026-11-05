@@ -28,6 +28,7 @@ import {
   reviveUnit,
   shoot,
   xpToNext,
+  spriteKey,
   weaponOf,
   type Clique,
   type GameState,
@@ -69,6 +70,20 @@ describe('starter roster', () => {
     const pc = createStarterRoster({ name: 'Dale', clique: 'stoner', schoolClass: 'science' })[0];
     expect(pc).toMatchObject({ id: 'pc', name: 'Dale', clique: 'stoner', schoolClass: 'science', weapon: 'flareGun', protagonist: true });
     expect(pc.hp).toBe(effectiveStats(pc).hp);
+  });
+
+  it('records the body for the player character only, and keys art from it', () => {
+    const girl = createStarterRoster({ name: 'Max', clique: 'jock', schoolClass: 'sport', look: 'female' });
+    expect(girl[0].look).toBe('female');
+    expect(spriteKey(girl[0])).toBe('pc-female');
+    expect(girl[1].look).toBeUndefined();
+    expect(spriteKey(girl[1])).toBe('amy');
+    expect(createStarterRoster()[0].look).toBe('male'); // default
+    const legacy = { ...girl[0] } as { look?: string };
+    delete legacy.look; // saves from before bodies existed
+    expect(spriteKey(legacy as typeof girl[0])).toBe('pc-male');
+    expect(unitOf(battleFor(girl), 'pc').sprite).toBe('pc-female');
+    expect(unitOf(battleFor(girl), 'p1').sprite).toBe('amy');
   });
 
   it('trims the name and falls back when it is blank', () => {

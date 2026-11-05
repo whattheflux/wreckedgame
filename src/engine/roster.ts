@@ -144,7 +144,12 @@ export interface RosterMember {
   dead: boolean;
   /** the player character: if they fall, the run is over (see `gameOverReason`) */
   protagonist: boolean;
+  /** the player character's body, which picks their art (absent on companions and on older saves) */
+  look?: Look;
 }
+
+/** The art key for a roster member: companions by name, the player character by body. */
+export const spriteKey = (m: RosterMember): string => (m.protagonist ? `pc-${m.look ?? 'male'}` : m.name.toLowerCase());
 
 export type Roster = RosterMember[];
 
@@ -154,13 +159,17 @@ export const FIELD_SIZE = 4;
 
 export const PLAYER_ID = 'pc';
 
+/** Which body (and art) the player character uses. */
+export type Look = 'male' | 'female';
+
 export interface PlayerChoice {
   name: string;
   clique: Clique;
   schoolClass: SchoolClass;
+  look?: Look;
 }
 
-export const DEFAULT_PLAYER: PlayerChoice = { name: 'You', clique: 'popular', schoolClass: 'sport' };
+export const DEFAULT_PLAYER: PlayerChoice = { name: 'You', clique: 'popular', schoolClass: 'sport', look: 'male' };
 
 /** The friends who start with you. Clique and class are independent, so these are just their starting picks. */
 const COMPANIONS: Array<{ id: string; name: string; clique: Clique; schoolClass: SchoolClass }> = [
@@ -170,7 +179,7 @@ const COMPANIONS: Array<{ id: string; name: string; clique: Clique; schoolClass:
   { id: 'p4', name: 'Anna', clique: 'drama', schoolClass: 'drama' },
 ];
 
-export function newMember(id: string, name: string, clique: Clique, schoolClass: SchoolClass, protagonist = false): RosterMember {
+export function newMember(id: string, name: string, clique: Clique, schoolClass: SchoolClass, protagonist = false, look?: Look): RosterMember {
   const m: RosterMember = {
     id,
     name,
@@ -184,6 +193,7 @@ export function newMember(id: string, name: string, clique: Clique, schoolClass:
     hp: 1,
     dead: false,
     protagonist,
+    ...(protagonist ? { look: look ?? 'male' } : {}),
   };
   m.hp = effectiveStats(m).hp;
   return m;
@@ -192,7 +202,7 @@ export function newMember(id: string, name: string, clique: Clique, schoolClass:
 /** The player character plus the four friends: level 1, no traits, full health. */
 export function createStarterRoster(player: PlayerChoice = DEFAULT_PLAYER): Roster {
   const name = player.name.trim().slice(0, 16) || DEFAULT_PLAYER.name;
-  return [newMember(PLAYER_ID, name, player.clique, player.schoolClass, true), ...COMPANIONS.map((c) => newMember(c.id, c.name, c.clique, c.schoolClass))];
+  return [newMember(PLAYER_ID, name, player.clique, player.schoolClass, true, player.look), ...COMPANIONS.map((c) => newMember(c.id, c.name, c.clique, c.schoolClass))];
 }
 
 export const livingSquad = (roster: Roster): Roster => roster.filter((m) => !m.dead);
@@ -272,6 +282,7 @@ export function memberSpec(m: RosterMember, x: number, y: number): UnitSpec {
     defense: s.defense,
     crit: s.crit,
     weapon: weaponOf(m),
+    sprite: spriteKey(m),
     ...(m.protagonist ? { protagonist: true } : {}),
   };
 }
