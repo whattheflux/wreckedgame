@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DIRS, dirFromDelta, nearestDir, previewUrl, spriteUrl, type Dir } from './sprites';
+import { DIRS, dirFromDelta, koUrl, nearestDir, previewUrl, spriteUrl, type Dir } from './sprites';
 
 describe('dirFromDelta', () => {
   it('maps the eight steps to their facings (y points down)', () => {
@@ -45,6 +45,15 @@ describe('bundled art', () => {
     }
     expect(spriteUrl('pc-male', 'up')).not.toBe(spriteUrl('pc-male', 'down'));
     expect(spriteUrl('pc-male', 'down')).not.toBe(spriteUrl('pc-female', 'down'));
+  });
+
+  it('has a knocked-out pose for every character that has art, and none for a stranger', () => {
+    for (const body of ['pc-male', 'pc-female', 'scott', 'amy', 'tyson', 'anna', 'drama-guy', 'stoner-male', 'stoner-female', 'shop-male', 'shop-female', 'goth-male', 'goth-female', 'cheer-male', 'cheer-female', 'rebel-male', 'rebel-female', 'bigkid-male', 'bigkid-female']) {
+      expect(koUrl(body), body).toBeTruthy();
+    }
+    expect(koUrl('nobody')).toBeNull();
+    // a ko.png never counts as a facing
+    expect(spriteUrl('pc-male', 'down')).not.toBe(koUrl('pc-male'));
   });
 
   it('has nothing for a unit without art', () => {

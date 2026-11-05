@@ -4,6 +4,7 @@
  *
  *   amy.png                     one image, used whichever way the unit faces
  *   pc-male/down-left.png ...   a folder per character with up to 8 facings
+ *   pc-male/ko.png              (optional) the knocked-out pose, drawn while the unit is downed
  *
  * The folder name (or file name) is the unit's art key: its `sprite` field, else its lowercase name.
  */
@@ -50,6 +51,7 @@ export function nearestDir(want: Dir, available: readonly Dir[]): Dir | null {
 
 interface SpriteSet {
   single?: string;
+  ko?: string;
   dirs: Partial<Record<Dir, string>>;
 }
 
@@ -64,6 +66,7 @@ for (const [path, url] of Object.entries(FILES)) {
   const set = SETS.get(id) ?? { dirs: {} };
   if (parts.length === 1) set.single = url;
   else if (parts.length === 2 && isDir(parts[1])) set.dirs[parts[1]] = url;
+  else if (parts.length === 2 && parts[1] === 'ko') set.ko = url;
   SETS.set(id, set);
 }
 
@@ -74,6 +77,9 @@ export function spriteUrl(id: string, want: Dir): string | null {
   const d = nearestDir(want, Object.keys(set.dirs).filter(isDir));
   return d ? (set.dirs[d] as string) : (set.single ?? null);
 }
+
+/** URL of the knocked-out pose for `id`, or null if it has none. */
+export const koUrl = (id: string): string | null => SETS.get(id)?.ko ?? null;
 
 /** A picture to show in menus (front-facing if there is one). */
 export const previewUrl = (id: string): string | null => spriteUrl(id, 'down');

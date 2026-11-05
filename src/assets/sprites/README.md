@@ -40,3 +40,10 @@ transparent 256x256 files. Use the same `--scale` for every character so they st
 Stoner (male and female) sheets are on a flat green screen: use `--chroma --scale 0.385`; the cut drops the green ground, grid, and shadow, keeps green clothing (it tells ground from cloth by blue level), clears stray shadow green near the shoes, and despills the edge.
 `--only` drops it, `--flip` mirrors another facing into its place and `--copy` makes a stand-in.
 `--flood` is for sheets on a dark ground, where dark boots and the floor shadow sit close to the ground colour.
+
+## Knocked-out poses
+
+`<name>/ko.png` (optional) is the lying-down pose drawn while a unit is downed; without it the board falls back to a
+grey crossed-out marker. Cut a green-screen sheet of lying figures with
+`python3 -I tools/slice_ko_sheet.py SHEET.jpg name1,name2,...` (names in reading order; rows are found from the figures,
+so rows may hold different counts). Same 0.385 scale as the standing sprites; each figure is centred on the 256 canvas.

@@ -2,7 +2,7 @@ import type { Biome, GameState, Pos, Terrain, Unit } from '../engine/types';
 import { coverAgainst, dist, posKey, type PathNode } from '../engine/grid';
 import type { Hint } from '../engine/hint';
 import { computeShot, type ShotPreview } from '../engine/combat';
-import { dirFromDelta, loadedImage, spriteUrl, type Dir } from './sprites';
+import { dirFromDelta, koUrl, loadedImage, spriteUrl, type Dir } from './sprites';
 
 export interface ViewState {
   selectedId: string | null;
@@ -53,6 +53,11 @@ const TEAM_COLOR = { player: '#3d8fc2', enemy: '#c2503d' } as const;
 /** The unit's art for the way it is facing once it has loaded, else null (draw the circle). */
 function spriteFor(u: Unit, facing: Dir): HTMLImageElement | null {
   const url = spriteUrl(u.sprite ?? u.name.toLowerCase(), facing);
+  return url ? loadedImage(url) : null;
+}
+
+function koFor(u: Unit): HTMLImageElement | null {
+  const url = koUrl(u.sprite ?? u.name.toLowerCase());
   return url ? loadedImage(url) : null;
 }
 
@@ -463,6 +468,26 @@ export class BoardRenderer {
     const c = this.center(u.pos);
     const r = tile * 0.34;
     const pulse = state.active === 'player' ? 0.75 + 0.25 * Math.sin(performance.now() / 250) : 0.75;
+    const ko = koFor(u);
+    if (ko) {
+      // Knocked-out art: a pulsing red ring on the tile (so a revivable ally is easy to spot), the body on top.
+      ctx.globalAlpha = pulse * 0.9;
+      ctx.strokeStyle = '#e0674e';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.ellipse(c.x, c.y + tile * 0.05, tile * 0.46, tile * 0.3, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      const h = tile * 1.6;
+      const w = h * (ko.naturalWidth / ko.naturalHeight);
+      ctx.drawImage(ko, c.x - w / 2, c.y - h / 2, w, h);
+      ctx.fillStyle = '#e0674e';
+      ctx.font = `bold ${Math.round(tile * 0.24)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('DOWN', c.x, c.y - tile * 0.5);
+      return;
+    }
     ctx.globalAlpha = pulse;
     ctx.fillStyle = '#4b5864';
     ctx.beginPath();
