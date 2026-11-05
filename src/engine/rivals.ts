@@ -20,6 +20,7 @@ export const RIVAL_KINDS: RivalKind[] = [
   { label: 'Cheerleader', art: { male: 'cheer-male', female: 'cheer-female' } },
   { label: 'Rebel', art: { male: 'rebel-male', female: 'rebel-female' } },
   { label: 'New Kid', art: { male: 'newkid-male', female: 'newkid-female' } },
+  { label: 'Big Kid', art: { male: 'bigkid-male', female: 'bigkid-female' } },
   { label: 'Drama Kid', art: { male: 'drama-guy' } },
 ];
 
