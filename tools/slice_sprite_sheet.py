@@ -72,7 +72,7 @@ def cut(path, flood=False, chroma=False):
                 keep &= ~ground  # ground seen through the gap between the legs, enclosed by the figure
             alpha = np.where(keep, 255.0, 0.0)
             mx = cell.max(2)
-            if not flood:
+            if not flood and not chroma:
                 alpha[keep & (mx < 58) & (spread < 9)] = 110  # the floor shadow: translucent
             if chroma:
                 # despill: pixels touching the cut carry a green fringe, pull green down to the red/blue level
