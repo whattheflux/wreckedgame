@@ -3,10 +3,11 @@
 Cut a 4x2 facing sheet (labels on top of each cell, flat grey background) into transparent 256x256
 sprites under src/assets/sprites/<name>/<facing>.png.
 
-  python3 tools/slice_sprite_sheet.py SHEET.jpg NAME [--scale S] [--only dir,dir] [--flip src:dst,...] [--copy src:dst,...]
+  python3 tools/slice_sprite_sheet.py SHEET.jpg NAME [--scale S] [--flood] [--only dir,dir] [--flip src:dst,...] [--copy src:dst,...]
 
 --scale  pixels-per-source-pixel; keep the same value for every character so they stay in proportion
          (the player sheets used 0.4257). Default: fit this sheet's tallest figure to 232 px.
+--flood  use a connected-ground cut (for dark grounds where dark boots/shadow sit close to the ground colour)
 --only   keep just these facings (when a sheet has some that do not match the rest)
 --flip   make dst by mirroring src (e.g. down-left:down-right)
 --copy   make dst as a copy of src (a stand-in until real art exists)
@@ -21,13 +22,15 @@ from scipy import ndimage as ndi
 
 DIRS = [['down-left', 'down-right', 'up-left', 'up-right'], ['up', 'down', 'left', 'right']]
 OUT = os.path.join(os.path.dirname(__file__), '..', 'src', 'assets', 'sprites')
-BG = np.array([64, 64, 64], float)
 
 
-def cut(path):
+def cut(path, flood=False):
     a = np.asarray(Image.open(path).convert('RGB')).astype(float)
     H, W = a.shape[:2]
     cw, ch = W / 4, H / 2
+    # the ground colour varies between sheets: it is the commonest colour, so take the median
+    BG = np.median(a[::7, ::7].reshape(-1, 3), axis=0)
+    print('ground', BG.round())
     res = {}
     for r in range(2):
         for c in range(4):
@@ -38,14 +41,30 @@ def cut(path):
             spread = cell.max(2) - cell.min(2)
             # Figure = clearly different from the neutral grey, or tinted (the ground and its grid are
             # neutral, so a tinted pixel is hair, skin or cloth even when it is close in brightness).
-            fg = ndi.binary_opening((d > 30) | ((spread > 14) & (d > 10)), iterations=1)
+            if flood:
+                # Dark ground: dark boots and shadow are close to it in colour, so instead of a colour
+                # threshold take everything connected to the cell edge that still looks like ground.
+                mxc = cell.max(2)
+                # ground, its grid, and the flat dark-neutral floor shadow (the board draws its own base)
+                neutral = (spread < 8) & (mxc > 18) & (mxc < 52)
+                # only big flat neutral areas (grid squares, the shadow ellipse), not the odd dark boot pixel
+                big = ndi.binary_dilation(ndi.binary_opening(neutral, structure=np.ones((7, 7))), iterations=2) & neutral
+                ground = (d < 12) | big
+                gl, gn = ndi.label(ground)
+                edge = set(gl[0, :]) | set(gl[-1, :]) | set(gl[:, 0]) | set(gl[:, -1])
+                edge.discard(0)
+                fg = ~np.isin(gl, list(edge))
+                fg = ndi.binary_opening(fg, iterations=1)
+            else:
+                fg = ndi.binary_opening((d > 30) | ((spread > 14) & (d > 10)), iterations=1)
             lab, n = ndi.label(fg)
             if n == 0:
                 raise SystemExit(f'empty cell {DIRS[r][c]}')
             keep = ndi.binary_fill_holes(lab == 1 + int(np.argmax(ndi.sum(fg, lab, range(1, n + 1)))))
             alpha = np.where(keep, 255.0, 0.0)
             mx = cell.max(2)
-            alpha[keep & (mx < 58) & (spread < 9)] = 110  # the floor shadow: translucent
+            if not flood:
+                alpha[keep & (mx < 58) & (spread < 9)] = 110  # the floor shadow: translucent
             rgba = np.dstack([cell, alpha]).astype(np.uint8)
             rgba[~keep] = 0
             ys, xs = np.where(keep)
@@ -58,11 +77,12 @@ def main():
     ap.add_argument('sheet')
     ap.add_argument('name')
     ap.add_argument('--scale', type=float)
+    ap.add_argument('--flood', action='store_true', help='for sheets on a dark ground')
     ap.add_argument('--only')
     ap.add_argument('--flip', default='')
     ap.add_argument('--copy', default='')
     o = ap.parse_args()
-    cells = cut(o.sheet)
+    cells = cut(o.sheet, o.flood)
     if o.only:
         cells = {k: v for k, v in cells.items() if k in o.only.split(',')}
     scale = o.scale or 232 / max(im.height for im in cells.values())
