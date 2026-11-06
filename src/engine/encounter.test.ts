@@ -90,3 +90,14 @@ describe('encounterScenario', () => {
     expect(sc0.units.filter((u) => u.team === 'enemy').length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('ambush encounters', () => {
+  it('put the enemy close to the squad instead of out of sight', () => {
+    for (let seed = 1; seed < 15; seed++) {
+      const sc = encounterScenario({ seed, biome: 'forest', pods: 1, podSize: 2, difficulty: 2, ambush: true });
+      const foes = sc.units.filter((u) => u.team === 'enemy');
+      const nearest = Math.min(...foes.map((f) => f.x));
+      expect(nearest, `seed ${seed}`).toBeLessThanOrEqual(14);
+    }
+  });
+});

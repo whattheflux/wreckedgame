@@ -11,6 +11,7 @@ import {
   lootAt,
   moveGear,
   moveItem,
+  wieldProblem,
   quickMove,
   quickMoveGear,
   spriteKey,
@@ -20,7 +21,6 @@ import {
   deployRoster,
   effectiveStats,
   gameOverReason,
-  restAtCamp,
   xpToNext,
   encounterScenario,
   endTurn,
@@ -55,6 +55,8 @@ import { esc, hideOverlay, overlayOpen, showCreate, showPrep, showTitle } from '
 import { attackTip, handsHtml, moveTip, skillTip, tipHtml, type Tip } from './ui/actionbar';
 import { showInventory, showSpoils, type InvView } from './ui/inventory';
 import { collectSpoils, ensureStores, resolveSpoils } from './world/spoils';
+import { morning, rollAmbush } from './world/camp';
+import { showCamp } from './ui/camp';
 import { clearSave, loadGame, saveGame } from './world/save';
 import { BoardRenderer, type ViewState } from './render/board';
 import { koUrl, preloadArt, spriteUrl } from './render/sprites';
@@ -113,7 +115,12 @@ interface BattleCtx {
   reward: number;
   /** dev sandbox battle: no consequences, restart/next-map available */
   sandbox: boolean;
+  /** a night attack on camp: the enemy starts awake and close */
+  ambush?: boolean;
 }
+
+/** Set while a night ambush is being fought: when it ends, morning comes. */
+let pendingNight: { watch?: string } | null = null;
 let battleCtx: BattleCtx | null = null;
 
 /** Set once the run is lost (the player character fell, or nobody is left); play stops and only "New game" works. */
@@ -454,13 +461,30 @@ function openBattleInventory(): void {
 }
 
 /** I on the map: every living member's gear, and the party stash to swap with. */
-function openWorldInventory(): void {
+function openWorldInventory(after?: () => void): void {
   if (mode !== 'world' || over) return;
   const stash = ensureStores(world).stash;
   const live = world.roster.filter((m) => !m.dead);
   const member = (id: string): RosterMember => live.find((m) => m.id === id) ?? live[0];
   const settle = (m: RosterMember): void => {
     m.hp = Math.min(m.hp, effectiveStats(m).hp); // taking off a bonus can lower the cap
+  };
+  /** Run a gear change, undoing it if the member cannot manage the result (a two-hander with one hand). */
+  const guarded = (m: RosterMember, run: () => { ok: boolean; error?: string }): { ok: boolean; error?: string } => {
+    const g0 = { ...gearOf(m) };
+    const s0 = [...stash];
+    const r = run();
+    const problem = r.ok ? wieldProblem(m, gearOf(m)) : null;
+    if (problem) {
+      const g = gearOf(m);
+      for (const k of Object.keys(g)) delete g[k];
+      Object.assign(g, g0);
+      stash.length = 0;
+      stash.push(...s0);
+      return { ok: false, error: problem };
+    }
+    settle(m);
+    return r;
   };
   showInventory({
     title: 'Inventory',
@@ -482,22 +506,13 @@ function openWorldInventory(): void {
     },
     listTitle: 'Party stash',
     list: () => stash,
-    move: (id, from, to) => {
-      const m = member(id);
-      const r = moveItem(gearOf(m), stash, from, to);
-      settle(m);
-      return r;
-    },
-    quick: (id, from) => {
-      const m = member(id);
-      const r = quickMove(gearOf(m), stash, from);
-      settle(m);
-      return r;
-    },
+    move: (id, from, to) => guarded(member(id), () => moveItem(gearOf(member(id)), stash, from, to)),
+    quick: (id, from) => guarded(member(id), () => quickMove(gearOf(member(id)), stash, from)),
     onClose: () => {
       lastWorldSig = '';
       saveGame(world);
       updateWorldPanel();
+      after?.();
     },
   });
 }
@@ -518,6 +533,7 @@ const battleButtons: Btn[] = [
 
 const worldButtons: Btn[] = [
   { label: 'Enter site (E)', key: 'e', run: () => enterSite(siteNear(world.pos)), enabled: () => !!siteNear(world.pos) },
+  { label: 'Make camp (C)', key: 'c', run: () => openCamp(false), enabled: () => !over },
   { label: 'Inventory (I)', key: 'i', run: () => openWorldInventory(), enabled: () => !over },
   { label: 'Debug overlay (G)', key: 'g', run: () => (worldView.debug = !worldView.debug), enabled: () => true, active: () => worldView.debug },
   { label: 'Sandbox: Beach (B)', key: 'b', run: () => startSandbox(0), enabled: () => true },
@@ -742,6 +758,7 @@ function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
   battleCtx = ctx;
   // Real fights field the persistent squad; sandbox battles use the stock one and have no consequences.
   state = createBattle(ctx.sandbox ? scenario : deployRoster(scenario, world.roster, world.squad));
+  if (ctx.ambush) for (const u of state.units) if (u.team === 'enemy') u.dormant = false;
   // Start fetching everyone's art (and the ground's) right away; units are held back until theirs is in.
   void preloadArt(state.units.map((u) => u.sprite ?? u.name.toLowerCase()));
   void preloadTerrain(state.map.biome);
@@ -844,6 +861,7 @@ function finishBattle(): void {
   const ctx = battleCtx;
   if (!ctx || !state.winner || ctx.sandbox) return;
   const report = applyBattleResult(world.roster, state, world);
+  ensureStores(world).stash.push(...report.dropped);
   if (state.winner === 'player') {
     if (ctx.site) world.cleared[ctx.site.id] = true;
     world.scrap += ctx.reward;
@@ -853,6 +871,7 @@ function finishBattle(): void {
   }
   for (const note of report.notes) worldLog(note);
   checkGameOver(report.outcome);
+  completeNight();
   const spoils = collectSpoils(state);
   if (over || (spoils.loot.length === 0 && spoils.prisoners.length === 0 && spoils.killed === 0)) {
     enterWorld();
@@ -860,7 +879,7 @@ function finishBattle(): void {
   }
   // The field is ours: take what we want, then decide what to do with anyone left out cold.
   showSpoils(spoils, ctx.label, (choice) => {
-    for (const note of resolveSpoils(world, spoils, choice)) worldLog(note);
+    for (const note of resolveSpoils(world, spoils, choice, world)) worldLog(note);
     hideOverlay();
     enterWorld();
   });
@@ -872,8 +891,11 @@ function retreat(): void {
   if (ctx && !ctx.sandbox && !state.winner) {
     worldLog(`${ctx.label}: you pull back without finishing it.`);
     // Anyone who already went down is still lost, and wounds carry over; XP and injury recovery do not (see applyBattleResult).
-    for (const note of applyBattleResult(world.roster, state, world).notes) worldLog(note);
+    const res = applyBattleResult(world.roster, state, world);
+    ensureStores(world).stash.push(...res.dropped);
+    for (const note of res.notes) worldLog(note);
     checkGameOver();
+    completeNight();
   }
   enterWorld();
 }
@@ -911,6 +933,51 @@ function siteScenario(site: Site): Scenario {
   });
 }
 
+/** The camp screen: on the road (a night may bring an ambush) or at the home camp (safe, and mends faster). */
+function openCamp(safe: boolean): void {
+  if (mode !== 'world' || over) return;
+  const region = regionAt(world.pos);
+  const danger = safe ? 0 : region.danger;
+  showCamp({
+    world,
+    place: safe ? siteNear(world.pos)?.name ?? region.name : region.name,
+    safe,
+    danger,
+    onInventory: () => openWorldInventory(() => openCamp(safe)),
+    onSleep: (watch) => {
+      if (!safe && rollAmbush(world, { danger, watch })) {
+        pendingNight = { watch };
+        worldLog(`Night ambush in ${region.name}!`);
+        hideOverlay();
+        const d = Math.max(1, danger);
+        beginBattle(
+          encounterScenario({ seed: Math.floor(rand(world) * 0x7fffffff), biome: region.biome, pods: 1, podSize: d >= 3 ? 3 : 2, difficulty: d, ambush: true }),
+          { label: `Night ambush in ${region.name}`, site: null, reward: d * 2, sandbox: false, ambush: true },
+        );
+        return { ambush: true, notes: [] };
+      }
+      const notes = morning(world, safe ? 'home' : 'quiet', watch);
+      for (const n of notes) worldLog(n);
+      saveGame(world);
+      return { ambush: false, notes };
+    },
+    onClose: () => {
+      lastWorldSig = '';
+      saveGame(world);
+      updateWorldPanel();
+    },
+  });
+}
+
+/** An ambushed night ends with the fight: morning comes (a rough one). */
+function completeNight(): void {
+  if (!pendingNight) return;
+  const { watch } = pendingNight;
+  pendingNight = null;
+  if (over) return;
+  for (const n of morning(world, 'ambushed', watch)) worldLog(n);
+}
+
 function enterSite(site: Site | null): void {
   if (mode !== 'world' || over) return;
   if (!site) {
@@ -918,8 +985,7 @@ function enterSite(site: Site | null): void {
     return;
   }
   if (site.kind === 'home') {
-    const healed = restAtCamp(world.roster);
-    worldLog(`${site.name}: ${healed > 0 ? 'you rest, and everyone is back on their feet.' : 'everyone is already rested.'}`);
+    openCamp(true);
     return;
   }
   if (!site.difficulty) {
@@ -944,7 +1010,7 @@ function enterSite(site: Site | null): void {
 /** Traits and active injuries as extra panel lines. */
 function memberTags(m: RosterMember): string {
   const traits = m.traits.map((t) => TRAITS[t].name).join(', ');
-  const hurt = m.injuries.map((i) => `${INJURIES[i.id].name} (${i.left} fight${i.left === 1 ? '' : 's'})`).join(', ');
+  const hurt = m.injuries.map((i) => (INJURIES[i.id].permanent ? INJURIES[i.id].name : `${INJURIES[i.id].name} (${i.left} day${i.left === 1 ? '' : 's'})`)).join(', ');
   return (
     (traits ? `<br><span style="opacity:.75">${traits}</span>` : '') + (hurt ? `<br><span style="color:#e0674e">${hurt}</span>` : '')
   );

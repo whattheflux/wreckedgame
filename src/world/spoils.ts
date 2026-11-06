@@ -1,4 +1,5 @@
-import { allLoot, type GameState, type ItemId } from '../engine';
+import { allLoot, giveInjury, type GameState, type Injury, type ItemId } from '../engine';
+import { rand, type RngHolder } from '../engine/rng';
 
 /**
  * The end of a won fight: whatever is still lying on the ground, and any rival left out cold. The player takes what
@@ -19,6 +20,14 @@ export interface Captive {
   name: string;
   role: string;
   sprite?: string;
+  /** hurt in the fight or since; same injuries as the squad. Absent on older saves (treated as none). */
+  injuries?: Injury[];
+  /** what they are now: kept prisoner, or turned into a worker or a fighter */
+  status?: 'captive' | 'worker' | 'fighter';
+  /** 0-100: how hard they resist being turned. Starts high, drops when they are beaten. */
+  defiance?: number;
+  /** the camp day they last had something done to them (one thing a day) */
+  actedDay?: number;
 }
 
 export type Disposition = 'execute' | 'capture' | 'release';
@@ -32,6 +41,10 @@ export interface Mercy {
   killed: number;
   /** counter for captive uids */
   seq: number;
+  /** captives sold back for ransom */
+  ransomed?: number;
+  /** beatings, target practice and the like */
+  cruelty?: number;
 }
 
 /** The part of the world the spoils touch (kept narrow so it is easy to test). */
@@ -80,7 +93,10 @@ export interface SpoilsChoice {
 export const defaultChoice = (s: Spoils): SpoilsChoice => ({ take: s.loot.map((_, i) => i), fates: {} });
 
 /** Apply the choices to the world and return the log lines. Executing someone leaves remains. */
-export function resolveSpoils(world: SpoilsHolder, spoils: Spoils, choice: SpoilsChoice): string[] {
+/** Someone taken captive after being knocked out has this chance of coming round with an injury. */
+export const CAPTIVE_HURT_CHANCE = 0.35;
+
+export function resolveSpoils(world: SpoilsHolder, spoils: Spoils, choice: SpoilsChoice, rng?: RngHolder): string[] {
   const st = ensureStores(world);
   const notes: string[] = [];
   const taken = [...new Set(choice.take)].filter((i) => i >= 0 && i < spoils.loot.length).sort((a, b) => a - b);
@@ -97,7 +113,10 @@ export function resolveSpoils(world: SpoilsHolder, spoils: Spoils, choice: Spoil
     } else if (fate === 'capture') {
       st.mercy.captured += 1;
       st.mercy.seq += 1;
-      st.captives.push({ uid: `c${st.mercy.seq}`, name: p.name, role: p.role, ...(p.sprite ? { sprite: p.sprite } : {}) });
+      const injuries: Injury[] = [];
+      const captive: Captive = { uid: `c${st.mercy.seq}`, name: p.name, role: p.role, ...(p.sprite ? { sprite: p.sprite } : {}), injuries, status: 'captive', defiance: 60 };
+      if (rng && rand(rng) < CAPTIVE_HURT_CHANCE) giveInjury({ injuries }, rng);
+      st.captives.push(captive);
       notes.push(`${p.name} was taken captive.`);
     } else {
       st.mercy.spared.push({ name: p.name, role: p.role });

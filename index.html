@@ -117,6 +117,24 @@
       #overlay .seg { display: flex; gap: 4px; margin-top: 6px; }
       #overlay .seg button.on { border-color: #e8b04a; background: #2a2a1e; }
       #overlay .seg button.grim.on { border-color: #e0674e; background: #2a1a1a; }
+      #overlay .camp { display: grid; gap: 6px; }
+      #overlay .crow { display: grid; grid-template-columns: minmax(140px, 1.2fr) 80px minmax(160px, 2fr) 70px; gap: 8px; align-items: center; padding: 6px 8px; background: #101a23; border: 1px solid #2a3b4a; border-radius: 6px; font-size: 13px; }
+      @media (max-width: 720px) { #overlay .crow { grid-template-columns: 1fr 1fr; } }
+      #overlay .crow small, #overlay .prow small { opacity: 0.65; }
+      #overlay .hp.hurt { color: #e8b04a; }
+      #overlay .ok { opacity: 0.5; font-size: 12px; }
+      #overlay .inj { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+      #overlay .injrow { display: inline-flex; align-items: center; gap: 4px; }
+      #overlay .chip { font-size: 11px; padding: 1px 6px; border-radius: 10px; border: 1px solid #5c7080; background: #1a2530; }
+      #overlay .chip.serious { border-color: #e8b04a; color: #e8b04a; }
+      #overlay .chip.permanent { border-color: #e0674e; color: #e0674e; }
+      #overlay button.mini { font-size: 11px; padding: 2px 7px; }
+      #overlay button.mini.grim { border-color: #6b3a34; }
+      #overlay .prow { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; padding: 6px 8px; margin-bottom: 6px; background: #101a23; border: 1px solid #2a3b4a; border-radius: 6px; font-size: 13px; }
+      #overlay .prow .seg { flex-wrap: wrap; margin: 0; }
+      #overlay .def { font-size: 11px; opacity: 0.7; margin-left: 6px; }
+      #overlay select { background: #0e1720; color: #d7e0e8; border: 1px solid #2f4352; border-radius: 4px; padding: 2px 6px; }
+      #overlay .card:has(.camp) { max-width: 860px; }
       #overlay button.primary { background: #2b5a3a; border-color: #4a8a5c; font-size: 14px; padding: 8px 16px; }
     </style>
   </head>

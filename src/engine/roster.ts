@@ -2,7 +2,7 @@ import type { Scenario, UnitSpec } from './battle';
 import type { GameState, Unit, Weapon } from './types';
 import { WEAPONS } from './scenarios';
 import { rand, type RngHolder } from './rng';
-import { gearMods, startingGear, weaponOfGear, type Gear } from './items';
+import { gearMods, startingGear, weaponOfGear, weaponOfItem, type Gear, type ItemId } from './items';
 
 /**
  * The persistent squad. Everything here is plain JSON (saveable) and pure logic, like the rest of
@@ -90,27 +90,61 @@ export const TRAITS: Record<TraitId, TraitDef> = {
 /** Levels at which a member picks up a new trait (random, from the ones they don't have). */
 export const TRAIT_LEVELS: readonly number[] = [2, 4];
 
-export type InjuryId = 'twisted-ankle' | 'concussion' | 'cracked-ribs' | 'shaken';
+export type InjuryId =
+  | 'twisted-ankle'
+  | 'concussion'
+  | 'cracked-ribs'
+  | 'shaken'
+  | 'broken-nose'
+  | 'torn-tendon'
+  | 'deep-gash'
+  | 'lost-hand'
+  | 'lost-leg'
+  | 'blind-eye';
+
+export type BodyPart = 'head' | 'chest' | 'arm' | 'leg' | 'mind';
 
 export interface InjuryDef {
   name: string;
+  part: BodyPart;
   mods: Partial<StatBlock>;
-  /** completed fights until it heals */
+  /** days of rest (or completed fights) until it heals; 0 for a permanent one */
   recovery: number;
+  /** never heals: a scar the character lives with */
+  permanent?: boolean;
+  blurb: string;
 }
 
 export const INJURIES: Record<InjuryId, InjuryDef> = {
-  'twisted-ankle': { name: 'Twisted ankle', mods: { mobility: -1 }, recovery: 2 },
-  concussion: { name: 'Concussion', mods: { aim: -10 }, recovery: 2 },
-  'cracked-ribs': { name: 'Cracked ribs', mods: { hp: -3 }, recovery: 3 },
-  shaken: { name: 'Shaken up', mods: { aim: -5, crit: -5 }, recovery: 1 },
+  'twisted-ankle': { name: 'Twisted ankle', part: 'leg', mods: { mobility: -1 }, recovery: 2, blurb: 'Slows you down.' },
+  concussion: { name: 'Concussion', part: 'head', mods: { aim: -10 }, recovery: 2, blurb: 'Vision swims.' },
+  'cracked-ribs': { name: 'Cracked ribs', part: 'chest', mods: { hp: -3 }, recovery: 3, blurb: 'Every breath hurts.' },
+  shaken: { name: 'Shaken up', part: 'mind', mods: { aim: -5, crit: -5 }, recovery: 1, blurb: 'Hands will not stay still.' },
+  'broken-nose': { name: 'Broken nose', part: 'head', mods: { aim: -3, crit: -3 }, recovery: 3, blurb: 'Eyes streaming.' },
+  'torn-tendon': { name: 'Torn tendon', part: 'arm', mods: { aim: -8 }, recovery: 6, blurb: 'The arm will not hold steady. Slow to mend.' },
+  'deep-gash': { name: 'Deep gash', part: 'chest', mods: { hp: -2 }, recovery: 3, blurb: 'Keeps reopening.' },
+  'lost-hand': { name: 'Lost a hand', part: 'arm', mods: { aim: -6 }, recovery: 0, permanent: true, blurb: 'One hand only: no two-handed weapons.' },
+  'lost-leg': { name: 'Lost a leg', part: 'leg', mods: { mobility: -2 }, recovery: 0, permanent: true, blurb: 'Hobbles on a crutch.' },
+  'blind-eye': { name: 'Blind in one eye', part: 'head', mods: { aim: -8, crit: -3 }, recovery: 0, permanent: true, blurb: 'Judging distance is harder.' },
 };
 
-/** A member can carry at most this many injuries; a further one replaces whichever is closest to healing. */
+export const INJURY_IDS = Object.keys(INJURIES) as InjuryId[];
+export const TEMPORARY_INJURIES = INJURY_IDS.filter((id) => !INJURIES[id].permanent);
+export const PERMANENT_INJURIES = INJURY_IDS.filter((id) => INJURIES[id].permanent);
+
+export type Severity = 'light' | 'serious' | 'permanent';
+export const severityOf = (id: InjuryId): Severity => (INJURIES[id].permanent ? 'permanent' : INJURIES[id].recovery >= 4 ? 'serious' : 'light');
+
+/** A member can carry at most this many healing injuries; a further one replaces whichever is closest to healing. Permanent ones are extra. */
 export const MAX_INJURIES = 2;
 
 /** Stat floors so stacked penalties can't make a unit useless. */
 export const STAT_FLOOR: StatBlock = { hp: 4, mobility: 3, aim: 30, defense: 0, crit: 0 };
+
+/** A real fall (the leader going down) is a permanent scar this often; battered survivors only get ones that heal. */
+export const PERMANENT_ON_FALL = 0.15;
+export const BATTERED_BELOW = 0.35;
+export const BATTERED_CHANCE = 0.4;
 
 export const MAX_LEVEL = 6;
 export const XP_PARTICIPATION = 8;
@@ -322,6 +356,8 @@ export interface ResultReport {
   notes: string[];
   /** ids of members lost in this battle */
   fallen: string[];
+  /** gear that had to come off (a two-hander after losing a hand): the caller puts it in the stash */
+  dropped: ItemId[];
 }
 
 export type Fate = 'dead' | 'injured';
@@ -345,28 +381,77 @@ function pick<T>(rng: RngHolder, items: readonly T[]): T {
   return items[Math.min(items.length - 1, Math.floor(rand(rng) * items.length))];
 }
 
-function addInjury(m: RosterMember, rng: RngHolder, notes: string[]): void {
+export const hasInjury = (m: RosterMember, id: InjuryId): boolean => m.injuries.some((i) => i.id === id);
+
+/** Hands a member can use: a lost hand leaves one. */
+export const handsOf = (m: RosterMember): 1 | 2 => (hasInjury(m, 'lost-hand') ? 1 : 2);
+
+/** The reason this member cannot hold this gear (a two-handed weapon with one hand), or null. */
+export function wieldProblem(m: RosterMember, gear: Gear): string | null {
+  if (handsOf(m) === 1 && [gear.rightHand, gear.leftHand].some((id) => id && (weaponOfItem(id)?.hands ?? 1) === 2)) {
+    return `${m.name} only has one hand: no two-handed weapons.`;
+  }
+  return null;
+}
+
+/** Take away anything they can no longer hold (a two-hander after losing a hand) and return it, for the stash. */
+export function dropIllegalGear(m: RosterMember): ItemId[] {
+  const g = gearOf(m);
+  const out: ItemId[] = [];
+  if (wieldProblem(m, g)) {
+    for (const slot of ['rightHand', 'leftHand'] as const) {
+      const id = g[slot];
+      if (id && (weaponOfItem(id)?.hands ?? 1) === 2) {
+        out.push(id);
+        delete g[slot];
+      }
+    }
+  }
+  return out;
+}
+
+export interface InjuryOptions {
+  /** chance (0-1) that this one is a permanent scar rather than something that heals */
+  permanentChance?: number;
+  /** only these (e.g. never permanent for a light knock) */
+  from?: readonly InjuryId[];
+}
+
+/**
+ * Give a member a random injury they do not already have. Healing injuries are capped (a further one
+ * replaces whichever is closest to mending); permanent ones always stay. Returns the injury given, or
+ * null if they already carry everything on offer.
+ */
+export function giveInjury(m: { injuries: Injury[] }, rng: RngHolder, opts: InjuryOptions = {}): InjuryId | null {
   const held = new Set(m.injuries.map((i) => i.id));
-  const options = (Object.keys(INJURIES) as InjuryId[]).filter((id) => !held.has(id));
-  const id = pick(rng, options);
-  if (m.injuries.length >= MAX_INJURIES) {
-    let soonest = 0;
-    m.injuries.forEach((inj, i) => {
-      if (inj.left < m.injuries[soonest].left) soonest = i;
-    });
-    m.injuries.splice(soonest, 1);
+  const wantPermanent = !opts.from && rand(rng) < (opts.permanentChance ?? 0);
+  const pool = (opts.from ?? (wantPermanent ? PERMANENT_INJURIES : TEMPORARY_INJURIES)).filter((id) => !held.has(id));
+  if (pool.length === 0) return null;
+  const id = pick(rng, pool);
+  if (!INJURIES[id].permanent) {
+    const healing = m.injuries.filter((i) => !INJURIES[i.id].permanent);
+    if (healing.length >= MAX_INJURIES) {
+      const soonest = healing.reduce((b, i) => (i.left < b.left ? i : b));
+      m.injuries.splice(m.injuries.indexOf(soonest), 1);
+    }
   }
   m.injuries.push({ id, left: INJURIES[id].recovery });
-  notes.push(`${m.name} went down hard: ${INJURIES[id].name.toLowerCase()}.`);
+  return id;
 }
 
-function tickInjuries(m: RosterMember, notes: string[]): void {
-  for (const inj of m.injuries) inj.left -= 1;
-  for (const inj of m.injuries.filter((i) => i.left <= 0)) notes.push(`${m.name} has recovered from ${INJURIES[inj.id].name.toLowerCase()}.`);
-  m.injuries = m.injuries.filter((i) => i.left > 0);
+/** Heal one day (or one fight) off every healing injury; returns the ones that finished. Permanent injuries never move. */
+export function tickInjuries(m: { name: string; injuries: Injury[] }, notes: string[], days = 1): InjuryId[] {
+  const healed: InjuryId[] = [];
+  for (const inj of m.injuries) if (!INJURIES[inj.id].permanent) inj.left -= days;
+  for (const inj of m.injuries.filter((i) => !INJURIES[i.id].permanent && i.left <= 0)) {
+    notes.push(`${m.name} has recovered from ${INJURIES[inj.id].name.toLowerCase()}.`);
+    healed.push(inj.id);
+  }
+  m.injuries = m.injuries.filter((i) => INJURIES[i.id].permanent || i.left > 0);
+  return healed;
 }
 
-function addXp(m: RosterMember, amount: number, rng: RngHolder, notes: string[]): void {
+export function addXp(m: RosterMember, amount: number, rng: RngHolder, notes: string[]): void {
   if (m.level >= MAX_LEVEL) return;
   m.xp += amount;
   while (m.level < MAX_LEVEL && m.xp >= xpToNext(m.level)) {
@@ -406,6 +491,7 @@ export function applyBattleResult(roster: Roster, state: GameState, rng: RngHold
   const fateOf = opts.fate ?? fateOfDowned;
   const notes: string[] = [];
   const fallen: string[] = [];
+  const dropped: ItemId[] = [];
 
   for (const m of roster) {
     if (m.dead) continue;
@@ -428,9 +514,18 @@ export function applyBattleResult(roster: Roster, state: GameState, rng: RngHold
 
     if (downed) {
       m.hp = u.alive ? Math.max(1, u.hp) : 1;
-      addInjury(m, rng, notes);
+      const id = giveInjury(m, rng, { permanentChance: PERMANENT_ON_FALL });
+      if (id) {
+        notes.push(`${m.name} went down hard: ${INJURIES[id].name.toLowerCase()}.`);
+        if (id === 'lost-hand') dropped.push(...dropIllegalGear(m));
+      }
     } else {
       m.hp = Math.max(1, u.hp);
+      // Ended the fight on their last legs: a chance of a knock that heals (never a scar; that takes a real fall).
+      if (u.alive && u.hp <= u.maxHp * BATTERED_BELOW && rand(rng) < BATTERED_CHANCE) {
+        const id = giveInjury(m, rng);
+        if (id) notes.push(`${m.name} is battered: ${INJURIES[id].name.toLowerCase()}.`);
+      }
     }
 
     if (completed) {
@@ -440,7 +535,7 @@ export function applyBattleResult(roster: Roster, state: GameState, rng: RngHold
 
     m.hp = Math.min(m.hp, effectiveStats(m).hp);
   }
-  return { outcome, notes, fallen };
+  return { outcome, notes, fallen, dropped };
 }
 
 /** Rest at camp: everyone still alive back to full HP. Injuries are not touched; they heal by completing fights. */

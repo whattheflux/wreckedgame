@@ -18,6 +18,8 @@ export interface EncounterOptions {
   podSize: number;
   /** 1 (easy) .. 4 (hard): scales enemy stats and weaponry */
   difficulty: number;
+  /** the enemy is already on top of you (a night attack): pods start close to the squad instead of out of sight */
+  ambush?: boolean;
 }
 
 /** How cluttered each ground type is. Counts are attempts; sizes are max edge length in tiles. */
@@ -115,9 +117,9 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
   const squadCentre: Pos = { x: 3, y: cy };
 
   const podCentres: Pos[] = [];
-  const minX = Math.ceil(squadCentre.x + SIGHT_RANGE + 3); // comfortably outside sight range
+  const minX = opts.ambush ? squadCentre.x + 5 : Math.ceil(squadCentre.x + SIGHT_RANGE + 3); // comfortably outside sight range, unless they are jumping you
   for (let tries = 0; podCentres.length < pods && tries < 400; tries++) {
-    const p = { x: ri(minX, W - 5), y: ri(3, H - 4) };
+    const p = { x: ri(minX, opts.ambush ? Math.min(W - 5, minX + 5) : W - 5), y: ri(3, H - 4) };
     if (podCentres.some((q) => dist(p, q) < MIN_POD_GAP)) continue;
     podCentres.push(p);
   }

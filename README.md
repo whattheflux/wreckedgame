@@ -19,7 +19,8 @@ npm run build    # typecheck + production build
 | --- | --- |
 | `WASD` / arrows | Walk (slides along the coast) |
 | Click the map | Travel there (A* route; clicking the sea snaps to the shore) |
-| `E` | Enter the site you're standing in (assault a hostile site, or rest at camp to heal everyone) |
+| `E` | Enter the site you're standing in (assault a hostile site, or open the home camp: safe, full heal) |
+| `C` | Make camp wherever you are (rest, treat wounds, deal with prisoners, risk a night ambush) |
 | `I` | Inventory: every member's gear and the party stash |
 | `G` | Debug overlay: walkable area and region circles |
 | `B` / `J` | Sandbox battles on the two hand-built maps |
@@ -63,6 +64,14 @@ npm run build    # typecheck + production build
 - A rival who drops rolls for **death or knockout**: crits, overkill and heavy weapons make death likelier (`deathChance`). Knocked-out rivals keep all their gear; a killed rival's items each survive by their own chance, and leave **remains** (for cooking, rituals and worse back at camp, later). Loot lands on the tile and shows as a satchel; stand on it and press `I`. Fallen companions drop everything they had. Fallen units don't block movement.
 - After a **won** fight a spoils screen lists what's left on the field (untick anything to leave it) and each rival still out cold: **Let go** (they may remember your mercy), **Capture** (kept as a captive) or **Execute** (leaves remains). Retreating or losing forfeits all of it. Loot goes in the party stash, captives in `world.captives`, and `world.mercy` counts who you spared, captured and killed.
 - Not in yet: camp handling of captives (workers, fighters, ransom, beatings, target and medical practice), using belt items, and a way to tell the story when a spared rival turns up again.
+
+## Camp, injuries and prisoners
+
+- **Injuries** are tied to body parts and come in grades: light (shaken, broken nose, twisted ankle, concussion, cracked ribs, deep gash), serious (torn tendon: six days) and **permanent** scars (lost hand: no two-handers; lost leg; blind in one eye). The leader's knock-down is a serious injury with a 15% chance of a scar; anyone who ends a fight below 35% HP has a 40% chance of a knock that heals. A member carries at most two healing injuries (a new one replaces whichever is closest to mending); scars are extra. Healing is counted in days: one per night in camp (two at the home camp) and one per completed fight.
+- **Making camp** (`C` anywhere, `E` at the home camp) opens the camp screen for the current day. Tend wounds with bandages from the stash (3 days off if Home Ec is in the squad, else 2; scars can't be treated), post a watch, change gear, and sleep. Morning heals 60% of max HP (the watcher half that); the home camp heals everyone fully, with no ambush risk.
+- **Night ambush:** each night away from home rolls by region danger (12 / 20 / 30 / 40%; safe ground never), halved by a watch. A hit is a real battle: the enemy starts awake and close. Morning comes when it ends (a rough one: 30% heal).
+- **Prisoners** (captured in spoils) can be dealt with once each per day: make a worker or fighter (odds fall with their defiance; beating lowers it), demand ransom (75% pays scrap and frees them), beat, target practice (squad member gains XP, prisoner is likely hurt and may die), medical practice (uses a bandage; XP; 12% goes wrong) or execute. Captives carry injuries the same way the squad does. Workers and fighters are just flags for now, waiting for the settlement.
+- Not in yet: sleeping units / reduced gear in an ambush, food, the settlement (buildings, gathering, missions, garrisons, research, crafting), and a use for workers and fighters.
 
 ## World map
 
@@ -132,11 +141,12 @@ src/world/    the free-roam layer (also pure logic, no DOM, except render.ts)
   worlddata.json  coast, regions, sites for the painted map
   world.ts      walk grid, A* + string-pulling, sliding movement, danger-weighted encounters
   render.ts     draws the map, sites, party, route
+  camp.ts       nights, ambush roll, treatment, prisoner actions
   spoils.ts     end-of-battle loot, prisoner fates, stash / captives / mercy
   save.ts       autosave to localStorage (validated, versioned, safe when storage is unavailable)
 src/render/   canvas board renderer (terrain, fog, overlays, hint arrow, effects, optional character sprites)
 src/assets/sprites/   drop-in character art, picked up automatically by name
-src/ui/       full-stage screens: title, character creation, squad pick, inventory, spoils
+src/ui/       full-stage screens: title, character creation, squad pick, inventory, spoils, camp
 src/main.ts   mode switch (world <-> battle), input, panels, log, enemy-phase pacing
 ```
 

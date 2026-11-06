@@ -294,6 +294,8 @@ export interface WorldState {
   captives?: Captive[];
   /** how the player has treated people */
   mercy?: Mercy;
+  /** camp days passed (starts at 1). Absent on older saves. */
+  day?: number;
 }
 
 export function createWorld(seed: number, player?: PlayerChoice): WorldState {
