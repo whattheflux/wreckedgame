@@ -40,6 +40,7 @@ npm run build    # typecheck + production build
 | `I` | Inventory for the selected unit, plus whatever lies on their tile (loot from fallen units). Armour, belt and pack changes are free; swapping what is in your hands costs 1 AP |
 | `E` | End turn |
 | `W` | Retreat to the world map |
+| `T` `A` `H` `K` `P` | Class and clique skills (see below); aimed ones wait for a click on an enemy, press again to cancel |
 | `Enter` | After the fight: return to the world (a defeat is a squad wipe and ends the run) |
 | `N` / `X` | Restart / next map (sandbox battles only) |
 
@@ -82,6 +83,20 @@ npm run build    # typecheck + production build
 - **Night ambush:** each night away from home rolls by region danger (12 / 20 / 30 / 40%; safe ground never), halved by a watch. A hit is a real battle: the enemy starts awake and close. Morning comes when it ends (a rough one: 30% heal).
 - **Prisoners** (captured in spoils) can be dealt with once each per day: make a worker or fighter (odds fall with their defiance; beating lowers it), demand ransom (75% pays scrap and frees them), beat, target practice (squad member gains XP, prisoner is likely hurt and may die), medical practice (uses a bandage; XP; 12% goes wrong) or execute. Captives carry injuries the same way the squad does. Workers and fighters are just flags for now, waiting for the settlement.
 - Not in yet: sleeping units / reduced gear in an ambush, food, the settlement (buildings, gathering, missions, garrisons, research, crafting), and a use for workers and fighters.
+
+## Skills
+
+Clique and class each add skills to the action bar (a skill both give is only listed once). Thrown skills resolve like shots, so range, falloff and cover all apply, but they use no ammo and never break your weapon.
+
+| Skill | From | Effect |
+| --- | --- | --- |
+| Throw Ball | Sport class | Range 7, 2-4 damage, light (move or throw again), unlimited |
+| Acid Beaker | Nerd clique | Range 5, 1-3 damage, 80% to set them burning, 2 per battle |
+| Charm | Popular clique | Range 7: they lose their turns until hurt. Chance 15-85%, lower on tougher targets. Once per battle; blocked by Silenced |
+| Incognito | Drama clique/class | Hidden from distant rivals for two turns (adjacent ones still see you); attacking breaks it. Once per battle |
+| Patch Up | Home Ec class | Spend a belt/pack bandage on an adjacent ally or yourself: +4 HP, stops bleeding |
+
+Anna gets her makeover at level 3 (`MAKEOVERS` in `roster.ts`). It switches her to `src/assets/sprites/anna-makeover/` art; until that folder exists she keeps her current look.
 
 ## World map
 

@@ -1,6 +1,6 @@
 import type { BattleEvent, GameState, Pos, Unit } from './types';
 import { computeShot } from './combat';
-import { canUseSkills } from './status';
+import { canUseSkills, isHiddenFrom } from './status';
 import { avg, coverValueVs, nearestUnit, threatAt } from './tactics';
 import { endTurn, living, moveApCost, moveUnit, reachableFor, reload, setOverwatch, shoot } from './battle';
 
@@ -26,7 +26,8 @@ const MAX_AMBUSH_TURNS = 2;
 function decide(state: GameState, u: Unit): Action {
   const melee = !!u.weapon.melee;
   if (!melee && u.ammo <= 0) return { kind: 'reload' };
-  const players = living(state, 'player');
+  // hidden (incognito) units can't be seen from a distance, so they aren't targets or threats
+  const players = living(state, 'player').filter((p) => !isHiddenFrom(p, u));
   if (players.length === 0) return { kind: 'idle' };
 
   const reach = reachableFor(state, u);

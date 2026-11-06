@@ -70,16 +70,19 @@ for (const [path, url] of Object.entries(FILES)) {
   SETS.set(id, set);
 }
 
+/** The art set for a key. A `<name>-makeover` key falls back to `<name>` until the new art is dropped in. */
+const setFor = (id: string): SpriteSet | undefined => SETS.get(id) ?? (id.endsWith('-makeover') ? SETS.get(id.slice(0, -'-makeover'.length)) : undefined);
+
 /** URL of the art for `id` facing `want`, or null if there is none. */
 export function spriteUrl(id: string, want: Dir): string | null {
-  const set = SETS.get(id);
+  const set = setFor(id);
   if (!set) return null;
   const d = nearestDir(want, Object.keys(set.dirs).filter(isDir));
   return d ? (set.dirs[d] as string) : (set.single ?? null);
 }
 
 /** URL of the knocked-out pose for `id`, or null if it has none. */
-export const koUrl = (id: string): string | null => SETS.get(id)?.ko ?? null;
+export const koUrl = (id: string): string | null => setFor(id)?.ko ?? null;
 
 /** A picture to show in menus (front-facing if there is one). */
 export const previewUrl = (id: string): string | null => spriteUrl(id, 'down');
@@ -88,7 +91,7 @@ export const previewUrl = (id: string): string | null => spriteUrl(id, 'down');
 export function artUrls(keys: readonly string[]): string[] {
   const urls = new Set<string>();
   for (const k of keys) {
-    const set = SETS.get(k);
+    const set = setFor(k);
     if (!set) continue;
     for (const u of Object.values(set.dirs)) urls.add(u as string);
     if (set.single) urls.add(set.single);

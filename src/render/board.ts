@@ -1,4 +1,4 @@
-import type { GameState, Pos, Unit } from '../engine/types';
+import type { GameState, Pos, Unit, Weapon } from '../engine/types';
 import { coverAgainst, dist, pathTo, posKey, type PathNode } from '../engine/grid';
 import type { Hint } from '../engine/hint';
 import { computeShot, EXPOSED_CRIT_BONUS, type ShotPreview } from '../engine/combat';
@@ -9,6 +9,8 @@ import { terrainImage } from './terrain';
 export interface ViewState {
   selectedId: string | null;
   mode: 'move' | 'shoot';
+  /** when aiming a thrown skill (ball, beaker, charm): the weapon to draw rings and previews for, instead of the one in hand */
+  aim?: Weapon | null;
   hover: Pos | null;
   reach: Map<string, PathNode> | null;
   preview: ShotPreview | null;
@@ -569,14 +571,16 @@ export class BoardRenderer {
     // Weapon range: green ring = full accuracy, amber ring = maximum range. Brightest while aiming.
     // Hovering a reachable tile shows the same rings from there, and what you could hit from it.
     const aiming = view.mode === 'shoot';
-    this.drawRangeRings(sel.pos, sel.weapon.optimal, sel.weapon.range, aiming ? 1 : 0.45);
+    const aimW = aiming && view.aim ? view.aim : sel.weapon;
+    const aimS = aiming && view.aim ? { ...sel, weapon: view.aim } : sel;
+    this.drawRangeRings(sel.pos, aimW.optimal, aimW.range, aiming ? 1 : 0.45);
     if (hoverNode && hoverNode.cost > 0 && view.hover) {
-      this.drawRangeRings(view.hover, sel.weapon.optimal, sel.weapon.range, 0.9);
+      this.drawRangeRings(view.hover, aimW.optimal, aimW.range, 0.9);
     }
 
     if (view.mode === 'shoot') {
       for (const e of foes) {
-        if (!computeShot(state.map, sel, sel.pos, e).canShoot) continue;
+        if (!computeShot(state.map, aimS, sel.pos, e).canShoot) continue;
         const c = this.rawCenter(e.pos);
         ctx.strokeStyle = 'rgba(255,90,70,0.9)';
         ctx.lineWidth = 2;
@@ -657,9 +661,11 @@ export class BoardRenderer {
     }
 
     if (view.mode === 'shoot') {
-      this.drawRangeLabels(sel.pos, sel.weapon.optimal, sel.weapon.range);
+      const aimW = view.aim ?? sel.weapon;
+      const aimS = view.aim ? { ...sel, weapon: view.aim } : sel;
+      this.drawRangeLabels(sel.pos, aimW.optimal, aimW.range);
       for (const e of foes) {
-        const pv = computeShot(state.map, sel, sel.pos, e);
+        const pv = computeShot(state.map, aimS, sel.pos, e);
         const c = this.center(e.pos);
         if (!pv.canShoot) {
           if (pv.reason === 'Out of range') this.drawTag('OUT OF RANGE', c.x, c.y + tile * 0.62, '#9aa7b3');

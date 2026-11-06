@@ -25,6 +25,10 @@ export interface StatusDef {
   skipsTurn?: boolean;
   /** no overwatch, no reviving */
   silences?: boolean;
+  /** taking damage ends it */
+  breaksOnHit?: boolean;
+  /** enemies cannot see or target the unit unless they are adjacent; attacking ends it */
+  stealth?: boolean;
 }
 
 export const STATUSES: Record<StatusId, StatusDef> = {
@@ -35,7 +39,9 @@ export const STATUSES: Record<StatusId, StatusDef> = {
   shaken: { name: 'Shaken', blurb: '-10 aim and -10 crit.', turns: 3, tag: 'SH', color: '#b9a5e8', aim: -10, crit: -10 },
   scared: { name: 'Scared', blurb: '-15 aim.', turns: 3, tag: 'SC', color: '#d98ad0', aim: -15 },
   blind: { name: 'Blinded', blurb: '-35 aim: swinging at shapes.', turns: 3, tag: 'BI', color: '#9aa7b3', aim: -35 },
-  silenced: { name: 'Silenced', blurb: 'Cannot hold overwatch or revive anyone.', turns: 3, tag: 'SI', color: '#6ab0e0', silences: true },
+  charmed: { name: 'Charmed', blurb: 'Starry-eyed: loses its turns until it is hurt.', turns: 2, tag: 'CH', color: '#f08ac0', skipsTurn: true, breaksOnHit: true },
+  hidden: { name: 'Incognito', blurb: 'Cannot be seen or targeted from a distance. Attacking gives you away.', turns: 2, tag: 'IN', color: '#8ad0c0', stealth: true },
+  silenced: { name: 'Silenced', blurb: 'Cannot hold overwatch, revive anyone or charm.', turns: 3, tag: 'SI', color: '#6ab0e0', silences: true },
 };
 
 export const STATUS_IDS = Object.keys(STATUSES) as StatusId[];
@@ -68,6 +74,23 @@ export function statusMods(u: Pick<Unit, 'status'>): { aim: number; crit: number
 }
 
 export const canUseSkills = (u: Pick<Unit, 'status'>): boolean => !(u.status ?? []).some((s) => STATUSES[s.id].silences);
+
+/** Is the unit hidden from this particular viewer? Adjacent units always notice. */
+export const isHiddenFrom = (u: Pick<Unit, 'status' | 'pos'>, viewer: Pick<Unit, 'pos'>): boolean =>
+  (u.status ?? []).some((s) => STATUSES[s.id].stealth) && Math.max(Math.abs(u.pos.x - viewer.pos.x), Math.abs(u.pos.y - viewer.pos.y)) > 1;
+
+/** Take a status off a unit (all of it). */
+export function removeStatus(u: Pick<Unit, 'status'>, id: StatusId): boolean {
+  if (!u.status?.some((s) => s.id === id)) return false;
+  u.status = u.status.filter((s) => s.id !== id);
+  if (u.status.length === 0) delete u.status;
+  return true;
+}
+
+/** Hurt: whatever breaks on a hit comes off (charm). */
+export function breakOnHit(u: Pick<Unit, 'status'>): void {
+  for (const s of [...(u.status ?? [])]) if (STATUSES[s.id].breaksOnHit) removeStatus(u, s.id);
+}
 
 /** Short text for panels: "Bleeding (2), Shaken (1)". */
 export const statusLine = (u: Pick<Unit, 'status'>): string => (u.status ?? []).map((s) => `${STATUSES[s.id].name} (${s.turns})`).join(', ');

@@ -22,7 +22,7 @@ export interface GameMap {
 }
 
 /** Conditions a hit can leave on someone. Defined in status.ts. */
-export type StatusId = 'stun' | 'bleed' | 'poison' | 'burn' | 'shaken' | 'scared' | 'blind' | 'silenced';
+export type StatusId = 'stun' | 'bleed' | 'poison' | 'burn' | 'shaken' | 'scared' | 'blind' | 'silenced' | 'charmed' | 'hidden';
 
 export interface Status {
   id: StatusId;
@@ -105,6 +105,10 @@ export interface Unit {
   gear?: Gear;
   /** conditions on this unit (absent when it has none) */
   status?: Status[];
+  /** extra skill ids this unit has on its action bar (from its clique and class); see skills.ts */
+  skills?: string[];
+  /** how many times each skill has been used this battle (skill id -> count) */
+  uses?: Record<string, number>;
   /** how a non-leader fell: killed outright, or knocked out cold (still there at the end of a won fight, to be dealt with) */
   fate?: 'dead' | 'unconscious';
 }
@@ -134,6 +138,8 @@ export type BattleEvent =
       hitChance: number;
     }
   | { type: 'revive'; unitId: string; targetId: string }
+  /** a class or clique skill that is not a shot (charm, incognito, patch up); `ok` is false when it failed (a charm that did not take) */
+  | { type: 'skill'; unitId: string; skillId: string; targetId?: string; ok: boolean }
   | { type: 'overwatch'; unitId: string }
   | { type: 'reload'; unitId: string }
   | { type: 'gear'; unitId: string }

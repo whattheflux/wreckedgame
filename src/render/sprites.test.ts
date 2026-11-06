@@ -70,3 +70,13 @@ describe('preloading', () => {
     expect(artUrls(['nobody'])).toEqual([]);
   });
 });
+
+describe('makeover art fallback', () => {
+  it('a <name>-makeover key uses the plain art until makeover art exists', async () => {
+    const { spriteUrl, previewUrl, artUrls } = await import('./sprites');
+    expect(spriteUrl('anna-makeover', 'down')).toBe(spriteUrl('anna', 'down'));
+    expect(previewUrl('anna-makeover')).toBe(previewUrl('anna'));
+    expect(artUrls(['anna-makeover']).length).toBeGreaterThan(0);
+    expect(spriteUrl('nobody-makeover', 'down')).toBeNull();
+  });
+});

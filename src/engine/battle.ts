@@ -3,7 +3,7 @@ import { dist, pathTo, posKey, reachableTiles, type PathNode } from './grid';
 import { computeShot, resolveShot } from './combat';
 import { podsToWake, updateExplored } from './vision';
 import { coverValueVs, nearestUnit } from './tactics';
-import { canUseSkills, hasStatus, tickStatuses } from './status';
+import { canUseSkills, hasStatus, isHiddenFrom, tickStatuses } from './status';
 import { gearForWeapon, type Gear } from './items';
 
 export interface UnitSpec {
@@ -29,6 +29,8 @@ export interface UnitSpec {
   sprite?: string;
   /** what the unit wears and carries; defaults to just `weapon` in the right hand */
   gear?: Gear;
+  /** class and clique skill ids (see skills.ts) */
+  skills?: string[];
 }
 
 export interface Scenario {
@@ -72,6 +74,7 @@ function spawn(s: UnitSpec): Unit {
     attacked: false,
     idleTurns: 0,
     gear: s.gear ? { ...s.gear } : gearForWeapon(s.weapon),
+    ...(s.skills?.length ? { skills: [...s.skills] } : {}),
     ...(s.protagonist ? { protagonist: true } : {}),
     ...(s.sprite ? { sprite: s.sprite } : {}),
   };
@@ -139,7 +142,7 @@ export function endTurn(state: GameState): BattleEvent[] {
 
 export const playerTurnOver = (state: GameState): boolean => living(state, 'player').every((u) => u.ap <= 0);
 
-function checkWin(state: GameState, events: BattleEvent[]): void {
+export function checkWin(state: GameState, events: BattleEvent[]): void {
   if (state.winner) return;
   // The player character falling for good (a second fall in one battle) ends it on the spot.
   const leaderLost = state.units.find((u) => u.team === 'player' && u.protagonist && !u.alive && !u.downed);
@@ -168,6 +171,7 @@ function triggerOverwatch(state: GameState, mover: Unit): BattleEvent[] {
   for (const o of state.units) {
     if (!mover.alive) break;
     if (!o.alive || o.team === mover.team || !o.overwatch || o.ammo <= 0) continue;
+    if (isHiddenFrom(mover, o)) continue; // can't shoot what you can't see
     const pv = computeShot(state.map, o, o.pos, mover, true);
     if (!pv.canShoot) continue;
     o.overwatch = false;
@@ -253,7 +257,7 @@ function scamper(state: GameState, members: Unit[]): BattleEvent[] {
 }
 
 /** Wake every living member of a pod: contact is made, the clock for the direction hint resets, and they scamper. */
-function wakePod(state: GameState, podId: string): BattleEvent[] {
+export function wakePod(state: GameState, podId: string): BattleEvent[] {
   const members = state.units.filter((u) => u.alive && u.pod === podId && u.dormant);
   if (members.length === 0) return [];
   for (const m of members) m.dormant = false;

@@ -52,6 +52,11 @@ import {
   statusLine,
   type Scenario,
   type Unit,
+  skillBlock,
+  useSkill,
+  usesLeft,
+  EXTRA_SKILLS,
+  type Skill,
 } from './engine';
 import { rand } from './engine/rng';
 import { esc, hideOverlay, overlayOpen, showCreate, showPrep, showTitle } from './ui/screens';
@@ -279,6 +284,14 @@ function playEffects(events: BattleEvent[]): number {
       if (t) renderer.addTextEffect(t.pos, 'BACK UP', '#6fcf7a', 1800);
       continue;
     }
+    if (ev.type === 'skill') {
+      const u = getUnit(state, ev.unitId);
+      const t = ev.targetId ? getUnit(state, ev.targetId) : u;
+      const label = ev.skillId === 'incognito' ? 'INCOGNITO' : ev.skillId === 'patchUp' ? 'PATCHED UP' : ev.ok ? 'CHARMED!' : 'NOT BUYING IT';
+      const color = ev.ok ? '#8ad0c0' : '#9aa7b3';
+      if (t && (seen(t.pos) || u?.team === 'player')) renderer.addTextEffect(t.pos, label, color, 1800);
+      continue;
+    }
     if (ev.type === 'tick') {
       const t = getUnit(state, ev.unitId);
       if (t && seen(t.pos)) renderer.addTextEffect(t.pos, `-${ev.damage} ${STATUSES[ev.effect].name.toLowerCase()}`, STATUSES[ev.effect].color, 1600);
@@ -307,6 +320,7 @@ const WALK_MS_ENEMY = 160;
 function select(id: string | null, snap = false): void {
   view.selectedId = id;
   view.mode = 'move';
+  clearAim();
   focusSelected(snap);
   refresh();
 }
@@ -506,6 +520,13 @@ function skillTipFor(id: string): (s: Unit | undefined) => Tip {
     if (s && id === 'overwatch' && s.weapon.melee) t.lines.push('Melee weapons cannot hold overwatch.');
     else if (s && id === 'overwatch' && s.ammo <= 0) t.lines.push('Out of ammo: reload first.');
     if (s && (id === 'overwatch' || id === 'revive') && !canUseSkills(s)) t.lines.push('Silenced: cannot do this right now.');
+    const extra = EXTRA_SKILLS[id];
+    if (s && extra) {
+      if (extra.perBattle !== undefined) t.lines.push(`Left this battle: ${Math.max(0, usesLeft(s, extra))} of ${extra.perBattle}.`);
+      if (id === 'charm') t.lines.push('Chance depends on the target: tougher kids are harder to sweet-talk (about 15-85%).');
+      const why = canAct() ? skillBlock(state, s, extra) : null;
+      if (why) t.lines.push(`<i>${esc(why)}</i>`);
+    }
     return t;
   };
 }
@@ -613,10 +634,11 @@ function openWorldInventory(after?: () => void): void {
 
 const battleButtons: Btn[] = [
   { label: 'Move (M)', name: 'Move', bar: 'main', tip: moveTip, key: 'm', run: () => setAimMode('move'), enabled: (s) => canAct() && !!s && s.ap > 0, active: () => view.mode === 'move' },
-  { label: 'Basic Attack (F)', name: 'Basic Attack', bar: 'main', tip: attackTip, key: 'f', run: () => setAimMode('shoot'), enabled: (s) => canAct() && !!s && s.ap > 0 && (!!s.weapon.melee || s.ammo > 0), active: () => view.mode === 'shoot' },
+  { label: 'Basic Attack (F)', name: 'Basic Attack', bar: 'main', tip: attackTip, key: 'f', run: () => setAimMode('shoot'), enabled: (s) => canAct() && !!s && s.ap > 0 && (!!s.weapon.melee || s.ammo > 0), active: () => view.mode === 'shoot' && !aimSkill },
   { label: 'Overwatch (O)', name: 'Overwatch', bar: 'skill', skillId: 'overwatch', tip: skillTipFor('overwatch'), key: 'o', run: () => act(setOverwatch(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0 && !s.weapon.melee && canUseSkills(s) },
   { label: 'Revive (V)', name: 'Revive', bar: 'skill', skillId: 'revive', tip: skillTipFor('revive'), key: 'v', run: () => reviveAdjacent(), enabled: (s) => canAct() && !!s && s.ap > 0 && canUseSkills(s) && revivableBy(state, s).length > 0 },
   { label: 'Reload (R)', name: 'Reload', bar: 'skill', skillId: 'reload', tip: skillTipFor('reload'), key: 'r', run: () => act(reload(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo < s.weapon.clip },
+  ...Object.keys(EXTRA_SKILLS).map(skillButton),
   { label: 'Inventory (I)', name: 'Inventory', bar: 'main', tip: inventoryTip, key: 'i', run: () => openBattleInventory(), enabled: (s) => canAct() && !!s },
   { label: 'End turn (E)', key: 'e', run: () => startEnemyPhase(), enabled: () => canAct() },
   { label: 'Continue (Enter)', key: 'enter', run: () => finishBattle(), enabled: () => !!state.winner && !busy && !battleCtx?.sandbox },
@@ -659,7 +681,7 @@ function refresh(): void {
   if (sel && view.hover) {
     const t = visibleUnitAt(view.hover.x, view.hover.y);
     if (t && t.team !== sel.team) {
-      view.preview = computeShot(state.map, sel, sel.pos, t);
+      view.preview = computeShot(state.map, view.aim ? { ...sel, weapon: view.aim } : sel, sel.pos, t);
       view.previewTargetId = t.id;
     }
   }
@@ -734,14 +756,66 @@ function renderPanel(sel: Unit | undefined): void {
 
   lines.push(
     `<div style="margin-top:10px;opacity:.55;font-size:11px">Click tile: move &middot; click enemy: attack<br>` +
-      `M move &middot; F attack &middot; O overwatch &middot; V revive &middot; R reload &middot; E end turn &middot; Tab next &middot; W retreat</div>`,
+      `M move &middot; F attack &middot; O overwatch &middot; V revive &middot; R reload &middot; E end turn &middot; Tab next &middot; W retreat<br>Skills: T throw &middot; A beaker &middot; H charm &middot; K incognito &middot; P patch up</div>`,
   );
   panel.innerHTML = lines.join('');
 }
 
+/** The aimed skill waiting for a target click (Throw Ball, Acid Beaker, Charm), if any. */
+let aimSkill: Skill | null = null;
+
+function clearAim(): void {
+  aimSkill = null;
+  view.aim = null;
+}
+
 function setAimMode(m: 'move' | 'shoot'): void {
   view.mode = m;
+  clearAim();
   refresh();
+}
+
+/** The weapon an aimed skill is drawn and previewed with: what it throws, or sight-range for a charm. */
+const aimWeapon = (k: Skill): Unit['weapon'] => k.throws ?? { name: k.name, damage: [0, 0], range: 7, optimal: 7, aimMod: 0, critMod: 0, clip: 99, hands: 1, heavy: false };
+
+/** Press a class/clique skill: aimed ones wait for a click on an enemy, the rest happen now. */
+function runSkill(id: string): void {
+  const sel = selected();
+  const k = EXTRA_SKILLS[id];
+  if (!sel || !k || !canAct()) return;
+  const why = skillBlock(state, sel, k);
+  if (why) {
+    toast(why);
+    return;
+  }
+  if (k.target === 'enemy') {
+    if (aimSkill?.id === id) {
+      setAimMode('move'); // pressing it again cancels
+      return;
+    }
+    view.mode = 'shoot';
+    aimSkill = k;
+    view.aim = aimWeapon(k);
+    refresh();
+    return;
+  }
+  act(useSkill(state, sel.id, id));
+}
+
+/** One action-bar button for a class/clique skill (only shown on units that have it). */
+function skillButton(id: string): Btn {
+  const k = EXTRA_SKILLS[id];
+  return {
+    label: `${k.name} (${k.key.toUpperCase()})`,
+    name: k.name,
+    bar: 'skill',
+    skillId: id,
+    tip: skillTipFor(id),
+    key: k.key,
+    run: () => runSkill(id),
+    enabled: (s) => canAct() && !!s && skillBlock(state, s, k) === null,
+    active: () => aimSkill?.id === id,
+  };
 }
 
 // ---------- player actions ----------
@@ -759,6 +833,7 @@ function act(res: ActionResult): void {
   }
   const walkMs = playEffects(res.events);
   view.mode = 'move';
+  clearAim();
   if (walkMs > 0) {
     // Let the walk play out before anything else happens (next unit, enemy phase, win check).
     busy = true;
@@ -810,7 +885,7 @@ function onClick(p: Pos): void {
   const sel = selected();
   if (!sel) return;
   if (clicked && clicked.team === 'enemy') {
-    act(shoot(state, sel.id, clicked.id));
+    act(aimSkill ? useSkill(state, sel.id, aimSkill.id, clicked.id) : shoot(state, sel.id, clicked.id));
     return;
   }
   act(moveUnit(state, sel.id, p));
@@ -883,6 +958,7 @@ function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
   renderer.resetFacing();
   view.selectedId = null;
   view.mode = 'move';
+  clearAim();
   view.hover = null;
   setButtons(battleButtons);
   const first = living(state, 'player')[0];

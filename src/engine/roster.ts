@@ -2,6 +2,7 @@ import type { Scenario, UnitSpec } from './battle';
 import type { GameState, Unit, Weapon } from './types';
 import { WEAPONS } from './scenarios';
 import { rand, type RngHolder } from './rng';
+import { skillIdsFor } from './skills';
 import { gearMods, startingGear, weaponOfGear, weaponOfItem, type Gear, type ItemId } from './items';
 
 /**
@@ -183,6 +184,8 @@ export interface RosterMember {
   protagonist: boolean;
   /** the player character's body, which picks their art (absent on companions and on older saves) */
   look?: Look;
+  /** has had their makeover (see MAKEOVERS): swaps to the `<name>-makeover` art when there is some, else keeps the old look */
+  makeover?: boolean;
 }
 
 /** A member's gear, creating the class starting kit the first time it is needed (so old saves just work). */
@@ -191,7 +194,12 @@ export function gearOf(m: RosterMember): Gear {
 }
 
 /** The art key for a roster member: companions by name, the player character by body. */
-export const spriteKey = (m: RosterMember): string => (m.protagonist ? `pc-${m.look ?? 'male'}` : m.name.toLowerCase());
+export const spriteKey = (m: RosterMember): string => (m.protagonist ? `pc-${m.look ?? 'male'}` : `${m.name.toLowerCase()}${m.makeover ? '-makeover' : ''}`);
+
+/** Companions who change their look partway through: roster id -> the level they do it at (and the line shown). */
+export const MAKEOVERS: Record<string, { level: number; note: string }> = {
+  p4: { level: 3, note: 'Anna has had enough of the costume trunk and gives herself a makeover.' },
+};
 
 export type Roster = RosterMember[];
 
@@ -329,6 +337,7 @@ export function memberSpec(m: RosterMember, x: number, y: number): UnitSpec {
     weapon: weaponOf(m),
     gear: { ...gearOf(m) },
     sprite: spriteKey(m),
+    skills: skillIdsFor(m.clique, m.schoolClass),
     ...(m.protagonist ? { protagonist: true } : {}),
   };
 }
@@ -466,6 +475,11 @@ export function addXp(m: RosterMember, amount: number, rng: RngHolder, notes: st
         m.traits.push(t);
         gained.push(`New trait: ${TRAITS[t].name}.`);
       }
+    }
+    const mk = MAKEOVERS[m.id];
+    if (mk && !m.makeover && !m.protagonist && m.level >= mk.level) {
+      m.makeover = true;
+      gained.push(mk.note);
     }
     m.hp += Math.max(0, effectiveStats(m).hp - before); // levelling up heals what it adds
     notes.push(gained.join(' '));

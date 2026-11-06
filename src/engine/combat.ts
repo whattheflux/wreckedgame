@@ -1,8 +1,8 @@
-import type { BattleEvent, CoverType, GameMap, GameState, Pos, Unit } from './types';
+import type { BattleEvent, CoverType, GameMap, GameState, Pos, Unit, Weapon } from './types';
 import { coverAgainst, dist, hasLineOfSight, isFlanked } from './grid';
 import { rand, randInt } from './rng';
 import { breakWeapon, knockDown } from './loot';
-import { STATUSES, addStatus, statusMods } from './status';
+import { STATUSES, addStatus, breakOnHit, removeStatus, statusMods } from './status';
 import type { StatusId } from './types';
 
 export const COVER_PENALTY: Record<CoverType, number> = { none: 0, half: 20, full: 40 };
@@ -96,7 +96,10 @@ export function resolveShot(
   preview: ShotPreview,
   overwatch: boolean,
   opportunity = false,
+  /** the weapon actually used, when it is not the one in hand (a thrown ball, a beaker) */
+  weapon: Weapon = attacker.weapon,
 ): BattleEvent {
+  removeStatus(attacker, 'hidden'); // attacking gives you away
   const hit = rand(state) * 100 < preview.hitChance;
   let crit = false;
   let damage = 0;
@@ -107,19 +110,20 @@ export function resolveShot(
 
   if (hit) {
     crit = rand(state) * 100 < preview.critChance;
-    damage = randInt(state, attacker.weapon.damage[0], attacker.weapon.damage[1]);
+    damage = randInt(state, weapon.damage[0], weapon.damage[1]);
     if (crit) damage = Math.floor(damage * 1.5);
     target.hp = Math.max(0, target.hp - damage);
     attacker.hits = (attacker.hits ?? 0) + 1;
     if (target.hp === 0) {
       killed = true;
-      const r = knockDown(state, target, attacker, { crit, damage, heavy: attacker.weapon.heavy });
+      const r = knockDown(state, target, attacker, { crit, damage, heavy: weapon.heavy });
       if (r === 'downed') {
         target.downed = true;
         wentDown = true;
       } else fate = r;
     } else {
-      for (const inf of attacker.weapon.inflicts ?? []) {
+      breakOnHit(target);
+      for (const inf of weapon.inflicts ?? []) {
         if (rand(state) < inf.chance) {
           addStatus(target, inf.effect, inf.turns);
           inflicted.push(inf.effect);
@@ -129,8 +133,8 @@ export function resolveShot(
   }
   // fragile weapons give out; rolled only for weapons that can (so old seeded fights are unchanged)
   let broke = false;
-  const br = attacker.weapon.breakChance;
-  if (br && attacker.alive !== false && rand(state) < br) broke = true;
+  const br = weapon.breakChance;
+  if (br && weapon === attacker.weapon && attacker.alive !== false && rand(state) < br) broke = true;
 
   const prefix = overwatch ? 'Overwatch: ' : opportunity ? 'Parting blow: ' : '';
   const fall = wentDown
@@ -144,10 +148,10 @@ export function resolveShot(
   const outcome = hit ? `${crit ? 'CRIT ' : ''}${damage} dmg${killed ? fall : ''}${names.length ? ` (${names.join(', ')})` : ''}` : 'miss';
   state.log.push({
     team: attacker.team,
-    text: `${prefix}${attacker.name} (${attacker.weapon.name}) -> ${target.name}: ${outcome} [${preview.hitChance}%]`,
+    text: `${prefix}${attacker.name} (${weapon.name}) -> ${target.name}: ${outcome} [${preview.hitChance}%]`,
     at: [{ ...attacker.pos }, { ...target.pos }],
   });
-  const weaponName = attacker.weapon.name;
+  const weaponName = weapon.name;
   if (broke) breakWeapon(state, attacker);
 
   return {

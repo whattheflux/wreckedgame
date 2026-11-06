@@ -96,7 +96,7 @@ export const ITEMS: Record<ItemId, ItemDef> = Object.fromEntries([
   def({ id: 'schoolbag', name: 'School Bag', kind: 'pack', slot: 'back', capacity: 4, loot: 0.3, color: '#a83a3a', desc: 'Four extra slots.' }),
   def({ id: 'hikingpack', name: 'Hiking Pack', kind: 'pack', slot: 'back', capacity: 8, loot: 0.2, color: '#4a7a4a', desc: 'Eight extra slots.' }),
   // small items: belt or pack
-  def({ id: 'bandage', name: 'Bandage', kind: 'small', loot: 0.9, color: '#f0e0d0', desc: 'Stops the bleeding. (Using items in a fight is not in yet.)' }),
+  def({ id: 'bandage', name: 'Bandage', kind: 'small', loot: 0.9, color: '#f0e0d0', desc: 'Stops the bleeding. A Home Ec kid can use one in a fight; at camp anyone can treat an injury with it.' }),
   def({ id: 'energybar', name: 'Energy Bar', kind: 'small', loot: 0.9, color: '#d08a2a', desc: 'Stale, but food.' }),
   def({ id: 'firecracker', name: 'Firecracker', kind: 'small', loot: 0.8, color: '#d83a2a', desc: 'Loud. Throwable once throwing is in.' }),
   def({ id: 'waterbottle', name: 'Water Bottle', kind: 'small', loot: 0.9, color: '#6ab0e0', desc: 'Half full.' }),
