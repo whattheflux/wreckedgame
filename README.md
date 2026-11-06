@@ -22,6 +22,7 @@ npm run build    # typecheck + production build
 | `E` | Enter the site you're standing in (assault a hostile site, or open the home camp: safe, full heal) |
 | `C` | Make camp wherever you are (rest, treat wounds, deal with prisoners, risk a night ambush) |
 | `I` | Inventory: every member's gear and the party stash |
+| `U` | Spend level-up picks for the squad |
 | `G` | Debug overlay: walkable area and region circles |
 | `B` / `J` | Sandbox battles on the two hand-built maps |
 | `L` | On the game-over screen: load the last autosave |
@@ -40,7 +41,7 @@ npm run build    # typecheck + production build
 | `I` | Inventory for the selected unit, plus whatever lies on their tile (loot from fallen units). Armour, belt and pack changes are free; swapping what is in your hands costs 1 AP |
 | `E` | End turn |
 | `W` | Retreat to the world map |
-| `T` `A` `H` `K` `P` | Class and clique skills (see below); aimed ones wait for a click on an enemy, press again to cancel |
+| letter keys | Class and clique skills (see Growing a character); aimed ones wait for a click on an enemy, press again to cancel. The panel lists the ones the selected unit has |
 | `Enter` | After the fight: return to the world (a defeat is a squad wipe and ends the run) |
 | `N` / `X` | Restart / next map (sandbox battles only) |
 
@@ -56,7 +57,7 @@ npm run build    # typecheck + production build
 - Squad bar: the left side shows each squad member's face, name, HP and AP; click one, press 1-9, or Tab / Shift+Tab to select them and the camera eases onto them (Z toggles zoomed-in and whole-map view). Camera: mouse wheel zooms toward the cursor, +/- zoom, [ and ] rotate the view in quarter turns (buttons top-right of the board do the same); units stay upright and turn to match.
 - On the board: hovering an enemy shows a tooltip (hit, crit, damage, range falloff, cover). Selecting a unit draws its weapon range as rings, green for full accuracy and dashed amber for maximum range. Enemies show a shield for cover (solid = full, half-filled = half) or a red broken shield when flanked, and reachable tiles show the cover you would get there. Hover a reachable tile to see the range rings and hit chances from it.
 - Walls block line of sight; cover objects can be shot over. Water is impassable.
-- Hit chance = aim + weapon mod - defense - cover - range falloff (4% per tile past optimal), clamped 5-95.
+- Hit chance = attack + weapon mod - defense - cover - range falloff (4% per tile past optimal), clamped 5-95. Melee and ranged use separate attack and defense lines (see Growing a character).
 - All randomness comes from a seeded PRNG stored on the game state, so battles are deterministic and replayable.
 
 ## Gear, loot and prisoners
@@ -84,19 +85,78 @@ npm run build    # typecheck + production build
 - **Prisoners** (captured in spoils) can be dealt with once each per day: make a worker or fighter (odds fall with their defiance; beating lowers it), demand ransom (75% pays scrap and frees them), beat, target practice (squad member gains XP, prisoner is likely hurt and may die), medical practice (uses a bandage; XP; 12% goes wrong) or execute. Captives carry injuries the same way the squad does. Workers and fighters are just flags for now, waiting for the settlement.
 - Not in yet: sleeping units / reduced gear in an ambush, food, the settlement (buildings, gathering, missions, garrisons, research, crafting), and a use for workers and fighters.
 
-## Skills
+## Growing a character
 
-Clique and class each add skills to the action bar (a skill both give is only listed once). Thrown skills resolve like shots, so range, falloff and cover all apply, but they use no ammo and never break your weapon.
+Nothing about a character is stored as a number you could edit. Every stat is rebuilt by `effectiveStats` from attributes + combat training + quirk + injuries + perks + what they are wearing, so the parts can never drift apart from the total.
 
-| Skill | From | Effect |
+### Attributes: SCHOLAR
+
+Seven attributes, one point to spend at every level, 1-10 each. A clique sets the starting spread (every clique spends the same 24 points, laid out differently) and a class adds 3 more.
+
+| | | Buys |
 | --- | --- | --- |
-| Throw Ball | Sport class | Range 7, 2-4 damage, light (move or throw again), unlimited |
-| Acid Beaker | Nerd clique | Range 5, 1-3 damage, 80% to set them burning, 2 per battle |
-| Charm | Popular clique | Range 7: they lose their turns until hurt. Chance 15-85%, lower on tougher targets. Once per battle; blocked by Silenced |
-| Incognito | Drama clique/class | Hidden from distant rivals for two turns (adjacent ones still see you); attacking breaks it. Once per battle |
-| Patch Up | Home Ec class | Spend a belt/pack bandage on an adjacent ally or yourself: +4 HP, stops bleeding |
+| **S** | Strength | +3 melee attack, +1 melee defense |
+| **C** | Charm | +4 to charm attempts, better odds talking prisoners round |
+| **H** | Hustle | +1 tile of movement per 2 points, +1 ranged defense, some melee defense |
+| **O** | Observation | +3 ranged attack, +1 tile of sight |
+| **L** | Luck | +2 crit, fewer permanent injuries |
+| **A** | Aptitude | +4% experience, faster work at camp |
+| **R** | Resilience | +2 HP |
+
+Sight is per-unit now, so a nerd genuinely sees further than a jock, spots pods earlier and lights more of the map.
+
+### Combat skills
+
+One training point a level, Battle Brothers style. Melee and ranged attack and defense are separate lines all the way through the shot maths, so a brawler and a sniper are different characters rather than the same one holding a different weapon.
+
+| Skill | Per point | Cap |
+| --- | --- | --- |
+| Melee Attack / Ranged Attack | +4 hit chance | 8 points |
+| Melee Defense / Ranged Defense | +2 harder to hit | 8 points |
+| Speed | +1 tile of movement per 2 points | 6 points |
+
+Movement is capped at 8 tiles however fast you get, so maps stay readable.
+
+### Perks
+
+A class perk at levels 3, 6, 9 and 12, a clique perk at 6 and 12, two on offer each time. The offer is drawn when the level happens and stored on the pick, so closing the screen cannot reroll it, and nothing is ever offered twice even when you gain several levels at once.
+
+A perk either teaches an **active skill**, changes **stats**, or turns on a **rule** (`PerkFlag` in `perks.ts`): ignore half cover, halve the range falloff, survive your first killing blow, never give a free swing as you walk away, free reloads, heavy weapons that no longer end the turn, and so on. Every flag is read in exactly one place in the engine, and `perks.test.ts` fails if one is defined and never granted.
+
+Everybody starts with their clique's and their class's signature perk, so a level-1 Amy already knows Charm and Patch Up.
+
+### Skills the perks teach
+
+Thrown skills resolve like shots, so range, falloff and cover all apply, but they use no ammo and never break the weapon in your hands.
+
+| Skill | Key | Effect |
+| --- | --- | --- |
+| Throw Ball | `T` | Range 7, 2-4 damage, light (move or throw again), unlimited |
+| Acid Beaker | `A` | Range 5, 1-3 damage, 80% to set them burning, 2 a battle |
+| Paint Bomb | `B` | Range 6, little damage, 70% to blind, 2 a battle |
+| Charm | `H` | Range 7: they lose their turns until hurt. 5-95% by their toughness and your Charm |
+| Analyse | `Q` | Range 9: marked for two turns, 15 easier for everyone to hit |
+| Tackle | `C` | Charge someone you can reach, hit them, usually stun. Ends the turn |
+| Incognito | `K` | Hidden from distant rivals for two turns; adjacent ones still see you, attacking breaks it |
+| Brace | `D` | 15 harder to hit until your next turn. Ends the turn |
+| War Cry | `S` | Rivals within 5 tiles are shaken |
+| Unsettle | `U` | Rivals within 4 tiles are scared |
+| Mellow Out | `J` | Clears everything bad off you and gives 3 HP back |
+| Rally | `Y` | An adjacent friend gets an action point back and shakes off their nerves |
+| Patch Up | `P` | A bandage on someone next to you: +4 HP, stops bleeding |
+| Rations | `G` | An energy bar on someone next to you: +3 HP, settles nerves |
 
 Anna gets her makeover at level 3 (`MAKEOVERS` in `roster.ts`). It switches her to `src/assets/sprites/anna-makeover/` art; until that folder exists she keeps her current look.
+
+### Experience
+
+XP comes from fights (taking part, each hit, each kill, winning), from the world (finding a region or site for the first time, clearing a hostile site for good) and from work at camp (treating an injury, practising on a prisoner). Aptitude multiplies all of it.
+
+The cap is level 12. Levelling decides nothing on its own: it queues *pending picks* on the character and the squad panel shows how many are owed. Press `U` on the map to spend them, or let the screen decide for one character or for everyone.
+
+Saves written before any of this are migrated on load: the character is rebuilt at level 1 and handed back every pick their level had earned.
+
+Rival schools scale with the squad's average level (`veterancy` in `encounter.ts`), so a late-run fight is not a walkover.
 
 ## World map
 
@@ -116,9 +176,9 @@ Permadeath is on: anyone who goes down in a fight is gone for good, except the p
 
 You and your friends are a persistent roster (`src/engine/roster.ts`), not a fresh squad each fight.
 
-- **You.** A new game starts with character creation: a name, a **clique** (Popular, Jock, Nerd, Drama kid, Weirdo, Stoner) and a **school class** (Sport, Science, Drama, Art, Home Ec, Woodwork, Metalwork). Any combination is allowed. The clique sets the stat line and growth; the class nudges the stats and decides the starting weapon. Four companions join you: Amy (Popular / Home Ec), Scott (Jock / Sport), Tyson (Nerd / Science), Anna (Drama kid / Drama). The roster holds at most 5.
+- **You.** A new game starts with character creation: a name, a **clique** (Popular, Jock, Nerd, Drama kid, Weirdo, Stoner) and a **school class** (Sport, Science, Drama, Art, Home Ec, Woodwork, Metalwork). Any combination is allowed. The clique sets the attribute spread and the perk pool; the class adds attributes, its own perk pool and the starting weapon. Four companions join you: Amy (Popular / Home Ec), Scott (Jock / Sport), Tyson (Nerd / Science), Anna (Drama kid / Drama). The roster holds at most 5. Each character also settles on one **quirk** (Sure-footed, Eagle-eyed, Tough, Thick-skinned, Jumpy, Showboat), worked out from who they are rather than rolled, so the same character is always the same person.
 - **Picking the squad.** Four take the field. Before each site assault you choose who goes (you always do); ambushes use your last pick. If you have four or fewer living, nobody is left out and there is no screen.
-- **Levelling.** A fight earns 8 XP for taking part, +2 per hit, +12 per kill, +10 for winning. Level *n* needs 40*n* XP; the cap is level 6. A level-up adds the clique's and class's growth and heals the max HP it adds. Levels 2 and 4 grant a random trait (Sure-footed, Eagle-eyed, Tough, Thick-skinned, Jumpy, Showboat), each a flat stat tweak.
+- **Levelling.** See *Growing a character* above: a fight earns 8 XP for taking part, +2 per hit, +12 per kill, +10 for winning, and the world and camp pay too. Every level hands out choices rather than numbers.
 - **HP carries over.** Survivors keep the HP they finished with. Press `E` at camp to restore everyone to full.
 - **Going down.** Everyone else who goes down is dead for good, including if you retreat afterwards (it fell before you pulled out). *You* get one free fall per fight: you are knocked down, not killed. A downed player character is ignored by the enemy and blocks the tile; an adjacent ally can spend 1 AP to revive you at 40% HP (with no AP that turn). Any fall leaves you with a serious injury after the fight. Falling a **second** time in the same fight is death and ends the run at once.
 - **Game over.** The run ends when you are dead (second fall), or when the whole squad is wiped (a defeat). Play stops; press `L` to load the last autosave, or start a new game.
@@ -131,7 +191,7 @@ You and your friends are a persistent roster (`src/engine/roster.ts`), not a fre
 
 Art is optional and picked up by name from `src/assets/sprites/`: a single image per unit (`amy.png`), or a folder with up to eight facings (`pc-male/down-left.png`, ...). Units turn to face their last move or target. The player character picks a boy or girl look at creation, which selects `pc-male` or `pc-female`. Units without art keep their circle. The spec is in `src/assets/sprites/README.md`.
 
-Stats are always derived (clique + class + level + traits + injuries, with floors), never stored, and the roster is plain JSON on `world.roster`, which is what the autosave stores.
+Stats are always derived (attributes + combat training + quirk + injuries + perks + gear, with floors), never stored, and the roster is plain JSON on `world.roster`, which is what the autosave stores.
 
 ## Finding the enemy
 
@@ -150,6 +210,11 @@ Each awake enemy picks, in order: (1) if it already fired this turn and is expos
 ```
 src/engine/   pure game logic, no DOM/rendering. Plain-JSON state (saveable), fully unit-tested
   types.ts      state, units, events
+  attributes.ts SCHOLAR attributes, the five combat skills, and the stat block everything derives into
+  perks.ts      the perk catalogue, who can learn what, and what a level-up offers
+  skills.ts     the active skills perks teach, and what they throw
+  abilities.ts  using those skills: throwing, charming, hiding, tackling, patching up
+  roster.ts     the persistent squad: levelling, pending picks, deployment, battle results, save repair
   grid.ts       map parsing, line of sight, cover, pathfinding
   combat.ts     shot maths (also used by UI previews, overwatch and AI) + resolution
   vision.ts     sight range, visible/explored tiles, pod discovery
@@ -183,7 +248,7 @@ The overworld calls into the battle engine for encounters; base and research wil
 2. [x] Fog of war, dormant enemy pods, scamper, contact hint
 3. [x] Enemy AI: cover-to-cover advance, group cohesion, overwatch ambushes, shoot-and-scoot
 4. [x] Camera zoom and rotation
-5. [x] Unit model: clique x class, traits, injuries, levelling, squad pick, knock-down/revive, autosave, class and clique skills (charm, throws, incognito, patch up)
+5. [x] Unit model: clique x class, SCHOLAR attributes, five combat skills, perks, traits, injuries, levelling to 12, squad pick, knock-down/revive, autosave
 6. [ ] Tech tree as data (spears -> metalwork -> chemistry/gunpowder -> crossbows -> steam -> electricity) gating weapons, armour, buildings
 7. [ ] Base view: building placement + resource loop
 8. [x] Free-roam world map (your painted map) with random encounters and assaultable sites

@@ -22,7 +22,19 @@ export interface GameMap {
 }
 
 /** Conditions a hit can leave on someone. Defined in status.ts. */
-export type StatusId = 'stun' | 'bleed' | 'poison' | 'burn' | 'shaken' | 'scared' | 'blind' | 'silenced' | 'charmed' | 'hidden';
+export type StatusId =
+  | 'stun'
+  | 'bleed'
+  | 'poison'
+  | 'burn'
+  | 'shaken'
+  | 'scared'
+  | 'blind'
+  | 'silenced'
+  | 'charmed'
+  | 'marked'
+  | 'hidden'
+  | 'braced';
 
 export interface Status {
   id: StatusId;
@@ -75,8 +87,20 @@ export interface Unit {
   maxAp: number;
   /** tiles covered per movement AP */
   mobility: number;
+  /** hit chance with anything thrown or fired */
   aim: number;
+  /** hit chance swinging at someone in reach; falls back to `aim` when a unit has no separate training */
+  meleeAim?: number;
+  /** how hard this unit is to hit at a distance */
   defense: number;
+  /** how hard this unit is to hit from arm's reach; falls back to `defense` */
+  meleeDefense?: number;
+  /** how far this unit can see (tiles); falls back to SIGHT_RANGE */
+  sight?: number;
+  /** rule flags from this unit's perks (see PerkFlag) */
+  flags?: string[];
+  /** the Charm attribute, which a few skills read; absent on hand-built units */
+  charm?: number;
   critChance: number;
   weapon: Weapon;
   ammo: number;
@@ -107,7 +131,7 @@ export interface Unit {
   status?: Status[];
   /** extra skill ids this unit has on its action bar (from its clique and class); see skills.ts */
   skills?: string[];
-  /** how many times each skill has been used this battle (skill id -> count) */
+  /** how many times each skill (and each once-a-battle perk) has fired this battle */
   uses?: Record<string, number>;
   /** how a non-leader fell: killed outright, or knocked out cold (still there at the end of a won fight, to be dealt with) */
   fate?: 'dead' | 'unconscious';
@@ -125,6 +149,8 @@ export type BattleEvent =
       killed: boolean;
       /** the target was knocked down rather than killed (so `killed` is true but they can be revived) */
       downed?: boolean;
+      /** the blow would have put them down, but Iron Will kept them up on 1 HP */
+      held?: boolean;
       /** a free hit as the target walked out of reach */
       opportunity?: boolean;
       /** the attacker's weapon broke on this attack */

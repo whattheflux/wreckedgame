@@ -102,6 +102,12 @@
       #overlay .choice.look { align-items: center; text-align: center; }
       #overlay .choice.look img { image-rendering: auto; }
       #overlay .bad { color: #e0674e; opacity: 1 !important; }
+      #overlay .grid.attrs { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+      #overlay .choice.attr b { display: flex; align-items: baseline; gap: 6px; }
+      #overlay .choice.attr i { margin-left: auto; font-style: normal; color: #e8b04a; font-variant-numeric: tabular-nums; }
+      #overlay .choice .letter { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 4px; background: #2a3b4a; color: #9fd3ef; font-size: 11px; }
+      #overlay .choice[disabled] { opacity: 0.4; cursor: default; }
+      #overlay .choice.perk .gain { color: #8fd39a; }
       #overlay .preview { margin-top: 14px; padding: 8px 10px; border-left: 3px solid #7ec4e8; background: #1a2530; font-size: 13px; line-height: 1.5; }
       #overlay .row { display: flex; gap: 8px; margin-top: 16px; }
       #overlay .card:has(.inv) { max-width: 920px; }

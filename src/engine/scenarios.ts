@@ -47,12 +47,16 @@ export function buildMap(width: number, height: number, edit: Edit, biome?: Biom
 
 // ---------- squad / rivals ----------
 
-/** The hand-built sandbox squad: the four companions at level 1 (a guard test keeps this in step with the roster). */
+/**
+ * The hand-built sandbox squad: the four companions exactly as the roster makes them at level 1,
+ * including the skills their starting perks teach. A guard test keeps these numbers in step with
+ * `effectiveStats`, so if the attribute maths moves, this moves with it.
+ */
 export const SQUAD_TEMPLATE = [
-  { id: 'p1', name: 'Amy', role: 'Popular / Home Ec', hp: 11, mobility: 6, aim: 72, defense: 12, crit: 10, weapon: WEAPONS.slingshot },
-  { id: 'p2', name: 'Scott', role: 'Jock / Sport', hp: 16, mobility: 6, aim: 62, defense: 0, crit: 5, weapon: WEAPONS.javelin },
-  { id: 'p3', name: 'Tyson', role: 'Nerd / Science', hp: 9, mobility: 5, aim: 78, defense: 0, crit: 5, weapon: WEAPONS.flareGun },
-  { id: 'p4', name: 'Anna', role: 'Drama kid / Drama', hp: 11, mobility: 5, aim: 66, defense: 8, crit: 13, weapon: WEAPONS.slingshot },
+  { id: 'p1', name: 'Amy', role: 'Popular / Home Ec', hp: 11, mobility: 5, aim: 66, meleeAim: 70, defense: 2, meleeDefense: 1, sight: 11, crit: 8, weapon: WEAPONS.slingshot, skills: ['charm', 'patchUp'] },
+  { id: 'p2', name: 'Scott', role: 'Jock / Sport', hp: 17, mobility: 6, aim: 58, meleeAim: 82, defense: 4, meleeDefense: 5, sight: 10, crit: 6, weapon: WEAPONS.javelin, skills: ['warCry', 'throwBall'] },
+  { id: 'p3', name: 'Tyson', role: 'Nerd / Science', hp: 9, mobility: 5, aim: 71, meleeAim: 56, defense: 6, meleeDefense: 5, sight: 16, crit: 6, weapon: WEAPONS.flareGun, skills: ['acidBeaker'] },
+  { id: 'p4', name: 'Anna', role: 'Drama kid / Drama', hp: 11, mobility: 6, aim: 61, meleeAim: 65, defense: 2, meleeDefense: 1, sight: 11, crit: 10, weapon: WEAPONS.slingshot, skills: ['incognito'] },
 ];
 
 export function squadAt(positions: Array<[number, number]>): UnitSpec[] {
@@ -148,9 +152,9 @@ export const jungleInterior: Scenario = {
     foe('e6', 'Chad', 33, 19, 'B', WEAPONS.pole),
     foe('e7', 'Troy', 21, 12, 'C', WEAPONS.slingshot, 9, 62),
     foe('e8', 'Wade', 22, 12, 'C', WEAPONS.javelin),
-    foe('e9', 'Kyle', 11, 6, 'D', WEAPONS.slingshot, 9, 62),
-    foe('e10', 'Jace', 12, 6, 'D', WEAPONS.javelin),
-    foe('e11', 'Nate', 11, 7, 'D', WEAPONS.pole),
+    foe('e9', 'Kyle', 10, 2, 'D', WEAPONS.slingshot, 9, 62),
+    foe('e10', 'Jace', 11, 2, 'D', WEAPONS.javelin),
+    foe('e11', 'Nate', 12, 2, 'D', WEAPONS.pole),
   ],
 };
 

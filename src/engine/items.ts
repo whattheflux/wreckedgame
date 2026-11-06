@@ -1,6 +1,6 @@
 import { WEAPONS } from './scenarios';
 import { rand, type RngHolder } from './rng';
-import type { StatBlock } from './roster';
+import { addMods, zeroStats, type StatBlock, type StatMods } from './attributes';
 import type { Weapon } from './types';
 
 /**
@@ -44,7 +44,7 @@ export interface ItemDef {
   /** weapons: the entry in WEAPONS this item is (the item id is the same key) */
   weapon?: keyof typeof WEAPONS;
   /** worn items: stat changes while it is on */
-  mods?: Partial<StatBlock>;
+  mods?: StatMods;
   /** packs: how many pack slots it adds */
   capacity?: number;
   /** chance (0-1) that it survives its wearer's death and can be looted; unconscious rivals keep everything */
@@ -138,12 +138,8 @@ const WORN: GearSlot[] = ['head', 'chest', 'legs', 'shoes'];
 
 /** Stat changes from what is worn. */
 export function gearMods(gear: Gear): StatBlock {
-  const sum: StatBlock = { hp: 0, mobility: 0, aim: 0, defense: 0, crit: 0 };
-  for (const s of WORN) {
-    const mods = ITEMS[gear[s] ?? '']?.mods;
-    if (!mods) continue;
-    for (const k of Object.keys(mods) as Array<keyof StatBlock>) sum[k] += mods[k] ?? 0;
-  }
+  const sum = zeroStats();
+  for (const s of WORN) addMods(sum, ITEMS[gear[s] ?? '']?.mods);
   return sum;
 }
 

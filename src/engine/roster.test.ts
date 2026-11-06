@@ -13,7 +13,17 @@ import {
   XP_PER_KILL,
   XP_VICTORY,
   applyBattleResult,
-  baseStats,
+  startingAttributes,
+  skillsFor,
+  xpMultiplier,
+  hasPending,
+  CLASS_PERK_EVERY,
+  CLIQUE_PERK_EVERY,
+  attributeStats,
+  ATTR_IDS,
+  CLIQUE_ATTR_TOTAL,
+  CLASS_ATTR_BONUS,
+  attrTotal,
   beachLanding,
   chooseSquad,
   createBattle,
@@ -101,7 +111,17 @@ describe('starter roster', () => {
       expect(m.id).toBe(t.id);
       expect(m.name).toBe(t.name);
       expect(`${CLIQUES[m.clique].label} / ${CLASSES[m.schoolClass].label}`).toBe(t.role);
-      expect(s).toEqual({ hp: t.hp, mobility: t.mobility, aim: t.aim, defense: t.defense, crit: t.crit });
+      expect(s).toEqual({
+        hp: t.hp,
+        mobility: t.mobility,
+        crit: t.crit,
+        rangedAim: t.aim,
+        meleeAim: t.meleeAim,
+        rangedDefense: t.defense,
+        meleeDefense: t.meleeDefense,
+        sight: t.sight,
+      });
+      expect(skillsFor(m)).toEqual(t.skills);
       expect(weaponOf(m)).toEqual(t.weapon);
       expect(m.hp).toBe(t.hp);
     });
@@ -116,36 +136,76 @@ describe('starter roster', () => {
         const s = effectiveStats(pc);
         for (const k of Object.keys(s) as Array<keyof typeof s>) expect(s[k]).toBeGreaterThanOrEqual(STAT_FLOOR[k]);
         expect(s.hp).toBeGreaterThanOrEqual(9);
-        expect(s.aim).toBeGreaterThanOrEqual(58);
+        expect(s.rangedAim).toBeGreaterThanOrEqual(50);
+        expect(s.meleeAim).toBeGreaterThanOrEqual(50);
+        // everybody knows how to do something from the off
+        expect(pc.perks.length).toBeGreaterThan(0);
       }
     }
   });
 });
 
+describe('starting attributes', () => {
+  it('spends the same budget for every clique, and the same bonus for every class', () => {
+    for (const c of Object.keys(CLIQUES) as Clique[]) expect(attrTotal(CLIQUES[c].attrs)).toBe(CLIQUE_ATTR_TOTAL);
+    for (const k of Object.keys(CLASSES) as SchoolClass[]) {
+      const added = Object.values(CLASSES[k].attrs).reduce((n, v) => n + (v ?? 0), 0);
+      expect(added).toBe(CLASS_ATTR_BONUS);
+    }
+    expect(attrTotal(startingAttributes('jock', 'sport'))).toBe(CLIQUE_ATTR_TOTAL + CLASS_ATTR_BONUS);
+    for (const id of ATTR_IDS) expect(startingAttributes('jock', 'sport')[id]).toBeGreaterThanOrEqual(1);
+  });
+
+  it('turns attributes into the lines the shot maths reads', () => {
+    const a = startingAttributes('jock', 'sport'); // strength 8, hustle 6, observation 2, resilience 5
+    const s = attributeStats(a);
+    expect(s.meleeAim).toBeGreaterThan(s.rangedAim); // a jock is far better up close
+    expect(s.hp).toBe(5 + a.resilience * 2);
+    expect(s.mobility).toBe(3 + Math.ceil(a.hustle / 2));
+    expect(attributeStats(startingAttributes('nerd', 'science')).rangedAim).toBeGreaterThan(s.rangedAim);
+  });
+
+  it('lets the same clique play very differently by class', () => {
+    const sci = effectiveStats(createStarterRoster({ name: 'T', clique: 'nerd', schoolClass: 'science' })[0]);
+    const metal = effectiveStats(createStarterRoster({ name: 'T', clique: 'nerd', schoolClass: 'metalwork' })[0]);
+    expect(sci.rangedAim).toBeGreaterThan(metal.rangedAim);
+    expect(metal.meleeAim).toBeGreaterThan(sci.meleeAim);
+  });
+});
+
 describe('effectiveStats', () => {
-  it('adds clique and class, growing each level, with mobility on its own schedule', () => {
-    expect(baseStats('jock', 'sport', 1)).toEqual({ hp: 16, mobility: 6, aim: 62, defense: 0, crit: 5 });
-    expect(baseStats('jock', 'sport', 3)).toMatchObject({ hp: 16 + 3 * 2, aim: 62 + 2, crit: 5 + 2, mobility: 6 });
-    expect(baseStats('popular', 'sport', 3).mobility).toBe(7);
-    expect(baseStats('popular', 'sport', 4).mobility).toBe(8);
-  });
-
-  it('lets the same clique play differently by class', () => {
-    expect(baseStats('nerd', 'metalwork', 1).defense).toBeGreaterThan(baseStats('nerd', 'science', 1).defense);
-    expect(baseStats('nerd', 'science', 1).aim).toBeGreaterThan(baseStats('nerd', 'metalwork', 1).aim);
-  });
-
-  it('stacks traits and injuries', () => {
+  it('stacks traits, injuries and perks on top of the attributes', () => {
     const m = byId(createStarterRoster(), 'p2'); // Scott, jock / sport
-    m.traits = ['tough', 'eagle-eyed'];
-    m.injuries = [{ id: 'twisted-ankle', left: 2 }];
-    expect(effectiveStats(m)).toMatchObject({ hp: 18, aim: 67, mobility: 5 });
+    m.traits = [];
+    const bare = effectiveStats(m);
+
+    m.traits = ['tough', 'eagle-eyed']; // +2 HP, +5 to both attack lines
+    const withTraits = effectiveStats(m);
+    expect(withTraits.hp).toBe(bare.hp + 2);
+    expect(withTraits.rangedAim).toBe(bare.rangedAim + 5);
+    expect(withTraits.meleeAim).toBe(bare.meleeAim + 5);
+
+    m.injuries = [{ id: 'twisted-ankle', left: 2 }]; // -1 Move
+    expect(effectiveStats(m).mobility).toBe(withTraits.mobility - 1);
+
+    m.perks = [...m.perks, 'conditioning']; // +5 HP
+    expect(effectiveStats(m).hp).toBe(withTraits.hp + 5);
+  });
+
+  it('a perk that only touches melee leaves the ranged line alone', () => {
+    const m = byId(createStarterRoster(), 'p2');
+    const before = effectiveStats(m);
+    m.perks = [...m.perks, 'whittler']; // +8 melee attack
+    const after = effectiveStats(m);
+    expect(after.meleeAim).toBe(before.meleeAim + 8);
+    expect(after.rangedAim).toBe(before.rangedAim);
   });
 
   it('never drops below the floors', () => {
-    const m = byId(createStarterRoster(), 'p3'); // Tyson, aim 78
+    const m = byId(createStarterRoster(), 'p3');
     m.injuries = Array.from({ length: 6 }, () => ({ id: 'concussion' as const, left: 2 }));
-    expect(effectiveStats(m).aim).toBe(30);
+    expect(effectiveStats(m).rangedAim).toBe(STAT_FLOOR.rangedAim);
+    expect(effectiveStats(m).sight).toBeGreaterThanOrEqual(STAT_FLOOR.sight);
   });
 });
 
@@ -204,7 +264,7 @@ describe('deployRoster', () => {
     byId(roster, 'p2').hp = 5;
     const u = unitOf(battleFor(roster), 'p2');
     expect(u.hp).toBe(5);
-    expect(u.maxHp).toBe(16);
+    expect(u.maxHp).toBe(effectiveStats(byId(roster, 'p2')).hp);
   });
 
   it('applies injury penalties, and clamps HP to the reduced maximum', () => {
@@ -213,10 +273,11 @@ describe('deployRoster', () => {
     const tyson = byId(roster, 'p3');
     tyson.injuries = [{ id: 'cracked-ribs', left: 3 }];
     tyson.hp = 99;
+    const healthy = effectiveStats(createStarterRoster().find((m) => m.id === 'p3')!).hp;
     const s = battleFor(roster);
-    expect(unitOf(s, 'p1').mobility).toBe(5);
-    expect(unitOf(s, 'p3').maxHp).toBe(9 - 3);
-    expect(unitOf(s, 'p3').hp).toBe(9 - 3);
+    expect(unitOf(s, 'p1').mobility).toBe(effectiveStats(byId(roster, 'p1')).mobility);
+    expect(unitOf(s, 'p3').maxHp).toBe(healthy - 3);
+    expect(unitOf(s, 'p3').hp).toBe(healthy - 3);
   });
 
   it('deploys only as many members as there are slots, player character first', () => {
@@ -250,6 +311,9 @@ describe('hit and kill counters', () => {
   });
 });
 
+/** What a raw XP award actually becomes for this member, after Aptitude. */
+const earned = (m: RosterMember, raw: number): number => Math.max(1, Math.round(raw * xpMultiplier(m.attributes)));
+
 describe('applyBattleResult', () => {
   it('carries surviving HP forward', () => {
     const roster = createStarterRoster();
@@ -258,7 +322,7 @@ describe('applyBattleResult', () => {
     s.winner = 'player';
     applyBattleResult(roster, s, rng());
     expect(byId(roster, 'p1').hp).toBe(4);
-    expect(byId(roster, 'p2').hp).toBe(16);
+    expect(byId(roster, 'p2').hp).toBe(effectiveStats(byId(roster, 'p2')).hp);
   });
 
   it('kills a companion who falls by default (permadeath) and reports it', () => {
@@ -349,7 +413,7 @@ describe('applyBattleResult', () => {
       knockDown(s, 'pc');
       s.winner = 'player';
       applyBattleResult(roster, s, rng());
-      expect(byId(roster, 'pc').xp).toBe(XP_PARTICIPATION + XP_VICTORY);
+      expect(byId(roster, 'pc').xp).toBe(earned(byId(roster, 'pc'), XP_PARTICIPATION + XP_VICTORY));
     });
   });
 
@@ -369,16 +433,22 @@ describe('applyBattleResult', () => {
     const roster = createStarterRoster();
     const s = battleFor(roster);
     const u = unitOf(s, 'p1');
-    u.hits = 3;
-    u.kills = 1;
+    u.hits = 2;
+    u.kills = 0;
     s.winner = 'player';
     applyBattleResult(roster, s, rng());
-    expect(byId(roster, 'p1').xp).toBe(XP_PARTICIPATION + 3 * XP_PER_HIT + XP_PER_KILL + XP_VICTORY);
-    expect(byId(roster, 'p3').xp).toBe(XP_PARTICIPATION + XP_VICTORY);
+    // small enough that nobody levels, so the whole award is still sitting in `xp`
+    expect(byId(roster, 'p1').xp).toBe(earned(byId(roster, 'p1'), XP_PARTICIPATION + 2 * XP_PER_HIT + XP_VICTORY));
+    expect(byId(roster, 'p3').xp).toBe(earned(byId(roster, 'p3'), XP_PARTICIPATION + XP_VICTORY));
+    expect(byId(roster, 'p1').level).toBe(1);
+
+    // Aptitude is what makes the difference between two people in the same fight
+    expect(xpMultiplier(byId(roster, 'p3').attributes)).toBeGreaterThan(xpMultiplier(byId(roster, 'p2').attributes));
   });
 
-  it('levels up, grants a trait, and heals the max HP it gained', () => {
+  it('levels up, owes the player a choice, and decides nothing by itself', () => {
     const roster = createStarterRoster();
+    const before = structuredClone(byId(roster, 'p2'));
     const s = battleFor(roster);
     const u = unitOf(s, 'p2');
     u.hp = 5;
@@ -387,24 +457,46 @@ describe('applyBattleResult', () => {
     s.winner = 'player';
     const report = applyBattleResult(roster, s, rng());
     const m = byId(roster, 'p2');
-    const total = XP_PARTICIPATION + 5 * XP_PER_HIT + 2 * XP_PER_KILL + XP_VICTORY;
+    const total = earned(m, XP_PARTICIPATION + 5 * XP_PER_HIT + 2 * XP_PER_KILL + XP_VICTORY);
     expect(m.level).toBe(2);
     expect(m.xp).toBe(total - xpToNext(1));
-    expect(m.traits).toHaveLength(1);
-    expect(m.hp).toBe(5 + (effectiveStats(m).hp - 16));
-    expect(report.notes.some((n) => n.includes('reaches level 2') && n.includes('New trait'))).toBe(true);
+    expect(report.levelled).toContain('p2');
+    // nothing was spent for them
+    expect(m.attributes).toEqual(before.attributes);
+    expect(m.combat).toEqual(before.combat);
+    expect(m.perks).toEqual(before.perks);
+    expect(m.pending.map((p) => p.kind)).toEqual(['attribute', 'combat']);
+    expect(report.notes.some((n) => n.includes('reaches level 2'))).toBe(true);
   });
 
-  it('can level several times at once, picking a trait at each trait level without repeats', () => {
+  it('queues every level it passes through, with the perk picks on their own schedule', () => {
     const roster = createStarterRoster();
     const s = battleFor(roster);
     unitOf(s, 'p3').kills = 20;
     s.winner = 'player';
     applyBattleResult(roster, s, rng(3));
     const m = byId(roster, 'p3');
-    expect(m.level).toBe(4);
-    expect(m.traits).toHaveLength(2);
-    expect(new Set(m.traits).size).toBe(2);
+    expect(m.level).toBeGreaterThan(1);
+    const levels = [...new Set(m.pending.map((p) => p.level))];
+    expect(levels).toEqual(Array.from({ length: m.level - 1 }, (_, i) => i + 2));
+    expect(m.pending.filter((p) => p.kind === 'attribute')).toHaveLength(m.level - 1);
+    expect(m.pending.filter((p) => p.kind === 'combat')).toHaveLength(m.level - 1);
+    for (const p of m.pending.filter((x) => x.kind === 'classPerk')) {
+      expect(p.level % CLASS_PERK_EVERY).toBe(0);
+      expect(p.options?.length).toBeGreaterThan(0);
+    }
+    for (const p of m.pending.filter((x) => x.kind === 'cliquePerk')) expect(p.level % CLIQUE_PERK_EVERY).toBe(0);
+  });
+
+  it('spends everything for you when asked to', () => {
+    const roster = createStarterRoster();
+    const s = battleFor(roster);
+    unitOf(s, 'p3').kills = 20;
+    s.winner = 'player';
+    applyBattleResult(roster, s, rng(3), { auto: true });
+    const m = byId(roster, 'p3');
+    expect(hasPending(m)).toBe(false);
+    expect(m.level).toBeGreaterThan(1);
   });
 
   it('stops earning XP at the level cap', () => {
@@ -448,7 +540,7 @@ describe('applyBattleResult', () => {
       const m = byId(roster, id);
       expect(m.hp).toBe(1);
       expect(m.injuries).toHaveLength(1);
-      expect(m.xp).toBe(XP_PARTICIPATION);
+      expect(m.xp).toBe(earned(m, XP_PARTICIPATION));
     }
   });
 
@@ -530,9 +622,9 @@ describe('restAtCamp', () => {
     m.hp = 3;
     byId(roster, 'p1').hp = 2;
     expect(restAtCamp(roster)).toBe(2);
-    expect(m.hp).toBe(16 - 3);
+    expect(m.hp).toBe(effectiveStats(m).hp);
     expect(m.injuries).toEqual([{ id: 'cracked-ribs', left: 3 }]);
-    expect(byId(roster, 'p1').hp).toBe(11);
+    expect(byId(roster, 'p1').hp).toBe(effectiveStats(byId(roster, 'p1')).hp);
     expect(restAtCamp(roster)).toBe(0);
   });
 

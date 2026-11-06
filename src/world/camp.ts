@@ -1,4 +1,4 @@
-import { INJURIES, addXp, giveInjury, tickInjuries, effectiveStats, livingSquad, type InjuryId, type RosterMember } from '../engine';
+import { INJURIES, XP_CAMP_TASK, addXp, giveInjury, tickInjuries, effectiveStats, livingSquad, type InjuryId, type RosterMember } from '../engine';
 import { rand, randInt } from '../engine/rng';
 import { ensureStores, type Captive } from './spoils';
 import type { WorldState } from './world';
@@ -79,18 +79,20 @@ function takeBandage(w: WorldState): boolean {
 export const treatDays = (w: WorldState): number => (livingSquad(w.roster).some((m) => m.schoolClass === 'homeec') ? 3 : 2);
 
 /** Use a bandage on one of a squad member's healing injuries. Scars cannot be treated. */
-export function treatMember(w: WorldState, memberId: string, injury: InjuryId): ActionResult {
+export function treatMember(w: WorldState, memberId: string, injury: InjuryId, by?: string): ActionResult {
   const m = w.roster.find((x) => x.id === memberId && !x.dead);
   const inj = m?.injuries.find((i) => i.id === injury);
   if (!m || !inj) return no('Nobody to treat.');
   if (INJURIES[injury].permanent) return no(`${INJURIES[injury].name} will not heal.`);
   if (!takeBandage(w)) return no('No bandages in the stash.');
   const notes: string[] = [];
+  const medic = livingSquad(w.roster).find((x) => x.id === by) ?? livingSquad(w.roster).find((x) => x.schoolClass === 'homeec') ?? livingSquad(w.roster)[0];
+  if (medic) addXp(medic, XP_CAMP_TASK, w, notes);
   inj.left -= treatDays(w);
   m.injuries = m.injuries.filter((i) => i.left > 0 || INJURIES[i.id].permanent);
   if (!m.injuries.includes(inj)) notes.push(`${m.name}'s ${INJURIES[injury].name.toLowerCase()} is mended.`);
   else notes.push(`${m.name}'s ${INJURIES[injury].name.toLowerCase()} is bandaged: ${inj.left} day${inj.left === 1 ? '' : 's'} to go.`);
-  return { ok: true, msg: notes[0] };
+  return { ok: true, msg: notes.join(' ') };
 }
 
 // ---------- prisoners ----------

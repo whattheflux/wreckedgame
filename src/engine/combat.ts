@@ -3,6 +3,7 @@ import { coverAgainst, dist, hasLineOfSight, isFlanked } from './grid';
 import { rand, randInt } from './rng';
 import { breakWeapon, knockDown } from './loot';
 import { STATUSES, addStatus, breakOnHit, removeStatus, statusMods } from './status';
+import { hasFlag } from './perks';
 import type { StatusId } from './types';
 
 export const COVER_PENALTY: Record<CoverType, number> = { none: 0, half: 20, full: 40 };
@@ -13,8 +14,28 @@ export const FLANK_CRIT_CHANCE = 100;
 export const EXPOSED_CRIT_BONUS = 15;
 export const RANGE_PENALTY_PER_TILE = 4;
 
-export type Shooter = Pick<Unit, 'aim' | 'critChance' | 'weapon'> & Partial<Pick<Unit, 'status'>>;
-export type Targetable = Pick<Unit, 'defense' | 'pos' | 'hp'>;
+// ---- what perks are worth, in one place so the numbers are easy to find ----
+/** Point Blank: ranged attacks inside this range get the bonus. */
+export const POINT_BLANK_RANGE = 3;
+export const POINT_BLANK_BONUS = 15;
+/** Brawler: extra crit points when swinging at someone. */
+export const BRAWLER_CRIT = 12;
+/** Tough Hide: every hit taken is this much lighter (never below 1). */
+export const TOUGH_HIDE = 1;
+/** Second Wind: HP recovered for putting someone down. */
+export const SECOND_WIND_HEAL = 3;
+/** Duelist: aim added to your own parting blows. */
+export const DUELIST_AIM = 20;
+
+export { hasFlag };
+
+export type Shooter = Pick<Unit, 'aim' | 'critChance' | 'weapon'> & Partial<Pick<Unit, 'status' | 'meleeAim' | 'flags'>>;
+export type Targetable = Pick<Unit, 'defense' | 'pos' | 'hp'> & Partial<Pick<Unit, 'status' | 'meleeDefense' | 'flags'>>;
+
+/** Attack value for the kind of blow being thrown: melee and ranged are trained separately. */
+export const aimOf = (s: Shooter, melee: boolean): number => (melee ? (s.meleeAim ?? s.aim) : s.aim);
+/** Defense value against the kind of blow coming in. */
+export const defenseOf = (t: Targetable, melee: boolean): number => (melee ? (t.meleeDefense ?? t.defense) : t.defense);
 
 export interface ShotPreview {
   canShoot: boolean;
@@ -36,6 +57,8 @@ export interface ShotPreview {
   /** the parts of the hit chance, for tooltips (all in points; penalties are positive) */
   rangePenalty: number;
   coverPenalty: number;
+  /** the target's cover was there but the shooter's perk ignored it */
+  coverIgnored: boolean;
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
@@ -52,14 +75,20 @@ export function computeShot(
   const distance = dist(from, target.pos);
   const melee = !!w.melee;
   // a blow in the face: cover means nothing, there is no falloff, and nobody is flanked
-  const cover = melee ? 'none' : coverAgainst(map, from, target.pos);
+  const realCover = melee ? 'none' : coverAgainst(map, from, target.pos);
+  // Cover Breaker: you shoot at the bit of them that is sticking out, so half cover stops counting.
+  const coverIgnored = realCover === 'half' && hasFlag(shooter, 'coverBreaker');
+  const cover: CoverType = coverIgnored ? 'none' : realCover;
   const flanked = melee ? false : isFlanked(map, from, target.pos);
   const exposed = cover === 'none' && !flanked;
-  const rangePenalty = melee ? 0 : Math.max(0, distance - w.optimal) * RANGE_PENALTY_PER_TILE;
+  const falloff = Math.max(0, distance - w.optimal) * RANGE_PENALTY_PER_TILE;
+  const rangePenalty = melee ? 0 : falloff * (hasFlag(shooter, 'deadeye') ? 0.5 : 1);
   const mods = statusMods(shooter);
+  const theirs = statusMods(target);
   const base = {
     melee,
     cover,
+    coverIgnored,
     flanked,
     exposed,
     dmgMin: w.damage[0],
@@ -76,9 +105,20 @@ export function computeShot(
   if (distance > w.range) return { ...base, canShoot: false, reason: 'Out of range' };
   if (!melee && !hasLineOfSight(map, from, target.pos)) return { ...base, canShoot: false, reason: 'No line of sight' };
 
+  const pointBlank = !melee && distance <= POINT_BLANK_RANGE && hasFlag(shooter, 'pointBlank') ? POINT_BLANK_BONUS : 0;
+  const watchCost = overwatch && !hasFlag(shooter, 'steadyAim') ? OVERWATCH_PENALTY : 0;
   const hit =
-    shooter.aim + mods.aim + w.aimMod - target.defense - COVER_PENALTY[cover] - rangePenalty - (overwatch ? OVERWATCH_PENALTY : 0);
-  const crit = flanked ? FLANK_CRIT_CHANCE : shooter.critChance + mods.crit + w.critMod + (melee ? 0 : exposed ? EXPOSED_CRIT_BONUS : 0);
+    aimOf(shooter, melee) +
+    mods.aim +
+    w.aimMod +
+    pointBlank -
+    (defenseOf(target, melee) + theirs.defense) -
+    COVER_PENALTY[cover] -
+    rangePenalty -
+    watchCost;
+  const crit = flanked
+    ? FLANK_CRIT_CHANCE
+    : shooter.critChance + mods.crit + w.critMod + (melee ? (hasFlag(shooter, 'brawler') ? BRAWLER_CRIT : 0) : exposed ? EXPOSED_CRIT_BONUS : 0);
 
   return {
     ...base,
@@ -105,6 +145,7 @@ export function resolveShot(
   let damage = 0;
   let killed = false;
   let wentDown = false;
+  let held = false;
   let fate: 'dead' | 'unconscious' | undefined;
   const inflicted: StatusId[] = [];
 
@@ -112,26 +153,35 @@ export function resolveShot(
     crit = rand(state) * 100 < preview.critChance;
     damage = randInt(state, weapon.damage[0], weapon.damage[1]);
     if (crit) damage = Math.floor(damage * 1.5);
+    if (hasFlag(target, 'toughHide')) damage = Math.max(1, damage - TOUGH_HIDE);
     target.hp = Math.max(0, target.hp - damage);
     attacker.hits = (attacker.hits ?? 0) + 1;
     if (target.hp === 0) {
-      killed = true;
       const r = knockDown(state, target, attacker, { crit, damage, heavy: weapon.heavy });
-      if (r === 'downed') {
+      if (r === 'held') {
+        held = true;
+      } else if (r === 'downed') {
+        killed = true;
         target.downed = true;
         wentDown = true;
-      } else fate = r;
-    } else {
-      breakOnHit(target);
-      for (const inf of weapon.inflicts ?? []) {
-        if (rand(state) < inf.chance) {
-          addStatus(target, inf.effect, inf.turns);
-          inflicted.push(inf.effect);
+      } else {
+        killed = true;
+        fate = r;
+        if (hasFlag(attacker, 'secondWind') && attacker.alive) {
+          const was = attacker.hp;
+          attacker.hp = Math.min(attacker.maxHp, attacker.hp + SECOND_WIND_HEAL);
+          if (attacker.hp > was) state.log.push({ team: attacker.team, text: `${attacker.name} gets a second wind (+${attacker.hp - was} HP).`, at: [{ ...attacker.pos }] });
         }
       }
     }
+    if (!killed) {
+      breakOnHit(target);
+      for (const inf of weapon.inflicts ?? []) {
+        if (rand(state) < inf.chance && addStatus(target, inf.effect, inf.turns)) inflicted.push(inf.effect);
+      }
+    }
   }
-  // fragile weapons give out; rolled only for weapons that can (so old seeded fights are unchanged)
+  // fragile weapons give out; only the thing actually in your hands can break
   let broke = false;
   const br = weapon.breakChance;
   if (br && weapon === attacker.weapon && attacker.alive !== false && rand(state) < br) broke = true;
@@ -139,13 +189,15 @@ export function resolveShot(
   const prefix = overwatch ? 'Overwatch: ' : opportunity ? 'Parting blow: ' : '';
   const fall = wentDown
     ? ` - ${target.name} is DOWN, needs a revive!`
-    : fate === 'unconscious'
-      ? ' - knocked out!'
-      : fate === 'dead' && target.team === 'enemy'
-        ? ' - killed!'
-        : ' - down!';
+    : held
+      ? ` - ${target.name} will not go down!`
+      : fate === 'unconscious'
+        ? ' - knocked out!'
+        : fate === 'dead' && target.team === 'enemy'
+          ? ' - killed!'
+          : ' - down!';
   const names = inflicted.map((i) => STATUSES[i].name.toLowerCase());
-  const outcome = hit ? `${crit ? 'CRIT ' : ''}${damage} dmg${killed ? fall : ''}${names.length ? ` (${names.join(', ')})` : ''}` : 'miss';
+  const outcome = hit ? `${crit ? 'CRIT ' : ''}${damage} dmg${killed || held ? fall : ''}${names.length ? ` (${names.join(', ')})` : ''}` : 'miss';
   state.log.push({
     team: attacker.team,
     text: `${prefix}${attacker.name} (${weapon.name}) -> ${target.name}: ${outcome} [${preview.hitChance}%]`,
@@ -163,6 +215,7 @@ export function resolveShot(
     damage,
     killed,
     ...(wentDown ? { downed: true } : {}),
+    ...(held ? { held: true } : {}),
     ...(fate && target.team === 'enemy' ? { fate } : {}),
     overwatch,
     hitChance: preview.hitChance,

@@ -7,13 +7,13 @@ export const avg = (a: number, b: number): number => (a + b) / 2;
 /** Expected damage per round the given shooters could put on a unit standing at `pos`. */
 export function threatAt(
   state: GameState,
-  target: Pick<Unit, 'defense' | 'hp'>,
+  target: Pick<Unit, 'defense' | 'hp'> & Partial<Pick<Unit, 'meleeDefense'>>,
   pos: Pos,
   shooters: Unit[],
 ): number {
   let total = 0;
   for (const s of shooters) {
-    const pv = computeShot(state.map, s, s.pos, { defense: target.defense, pos, hp: target.hp });
+    const pv = computeShot(state.map, s, s.pos, { defense: target.defense, meleeDefense: target.meleeDefense, pos, hp: target.hp });
     if (pv.canShoot) total += (pv.hitChance / 100) * avg(pv.dmgMin, pv.dmgMax);
   }
   return total;

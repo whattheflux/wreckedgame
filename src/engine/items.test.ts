@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FISTS, ITEMS, WEAPONS, gearMods, gearProblem, moveItem, packCapacity, quickMove, rivalGear, slotsOf, startingGear, weaponOfGear } from './index';
+import { zeroStats, FISTS, ITEMS, WEAPONS, gearMods, gearProblem, moveItem, packCapacity, quickMove, rivalGear, slotsOf, startingGear, weaponOfGear } from './index';
 import { type Gear } from './items';
 
 describe('items', () => {
@@ -15,8 +15,8 @@ describe('items', () => {
   });
 
   it('worn armour adds stats; carried armour does not', () => {
-    expect(gearMods({ head: 'helmet', shoes: 'runners' })).toMatchObject({ defense: 3, mobility: 1 });
-    expect(gearMods({ schoolbag: 'x', pack0: 'helmet', back: 'schoolbag' } as Gear).defense).toBe(0);
+    expect(gearMods({ head: 'helmet', shoes: 'runners' })).toMatchObject({ rangedDefense: 3, meleeDefense: 3, mobility: 1 });
+    expect(gearMods({ schoolbag: 'x', pack0: 'helmet', back: 'schoolbag' } as Gear).rangedDefense).toBe(0);
   });
 
   it('a two-hander takes both hands', () => {
@@ -73,7 +73,7 @@ describe('items', () => {
   it('starting kits change nothing: class weapon, no stat mods', () => {
     const g = startingGear('javelin', true);
     expect(weaponOfGear(g)).toBe(WEAPONS.javelin);
-    expect(gearMods(g)).toEqual({ hp: 0, mobility: 0, aim: 0, defense: 0, crit: 0 });
+    expect(gearMods(g)).toEqual(zeroStats());
     expect(gearProblem(g)).toBeNull();
   });
 

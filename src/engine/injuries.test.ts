@@ -21,7 +21,7 @@ describe('body-part injuries', () => {
     expect(PERMANENT_INJURIES).toContain(id);
     tickInjuries(m, [], 50);
     expect(m.injuries.map((i) => i.id)).toEqual([id]);
-    expect(effectiveStats(m).mobility + effectiveStats(m).aim).toBeLessThan(effectiveStats(member()).mobility + effectiveStats(member()).aim);
+    expect(effectiveStats(m).mobility + effectiveStats(m).rangedAim).toBeLessThan(effectiveStats(member()).mobility + effectiveStats(member()).rangedAim);
   });
 
   it('healing injuries are capped and replace the closest to mending; scars are extra', () => {

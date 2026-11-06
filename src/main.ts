@@ -52,6 +52,13 @@ import {
   statusLine,
   type Scenario,
   type Unit,
+  pendingCount,
+  migrateRoster,
+  grantXp,
+  XP_SITE_BASE,
+  XP_SITE_PER_DIFFICULTY,
+  XP_DISCOVERY,
+  PERKS,
   skillBlock,
   useSkill,
   usesLeft,
@@ -65,6 +72,7 @@ import { showInventory, showSpoils, type InvView } from './ui/inventory';
 import { collectSpoils, ensureStores, resolveSpoils } from './world/spoils';
 import { morning, rollAmbush } from './world/camp';
 import { showCamp } from './ui/camp';
+import { showLevelUp } from './ui/levelup';
 import { clearSave, loadGame, saveGame } from './world/save';
 import { BoardRenderer, type ViewState } from './render/board';
 import { koUrl, preloadArt, spriteUrl } from './render/sprites';
@@ -538,8 +546,20 @@ function inventoryTip(s: Unit | undefined): Tip {
   return { title: 'Inventory', cost: 'Free (a new weapon: 1 AP)', lines };
 }
 
-const unitStats = (hp: number, maxHp: number, aim: number, def: number, move: number, crit: number): string =>
-  `HP ${hp}/${maxHp} &middot; Aim ${aim} &middot; Def ${def} &middot; Move ${move} &middot; Crit ${crit}`;
+interface StatLine {
+  hp: number;
+  maxHp: number;
+  rangedAim: number;
+  meleeAim: number;
+  rangedDefense: number;
+  meleeDefense: number;
+  mobility: number;
+  crit: number;
+}
+
+const unitStats = (s: StatLine): string =>
+  `HP ${s.hp}/${s.maxHp} &middot; Move ${s.mobility} &middot; Crit ${s.crit}%<br>` +
+  `Ranged ${s.rangedAim}/${s.rangedDefense} &middot; Melee ${s.meleeAim}/${s.meleeDefense} <span style="opacity:.6">(attack/defense)</span>`;
 
 const weaponLine = (w: Unit['weapon'], ammo?: number): string =>
   `${w.name}: ${w.damage[0]}-${w.damage[1]} dmg, range ${w.range}, ${w.hands}-handed, ${w.heavy ? 'heavy' : 'light'}${ammo === undefined ? '' : `, ammo ${ammo}/${w.clip}`}`;
@@ -550,7 +570,7 @@ function unitView(u: Unit): InvView {
     role: u.role,
     sprite: u.sprite ?? u.name.toLowerCase(),
     gear: u.gear ?? {},
-    stats: unitStats(u.hp, u.maxHp, u.aim, u.defense, u.mobility, u.critChance),
+    stats: unitStats({ hp: u.hp, maxHp: u.maxHp, rangedAim: u.aim, meleeAim: u.meleeAim ?? u.aim, rangedDefense: u.defense, meleeDefense: u.meleeDefense ?? u.defense, mobility: u.mobility, crit: u.critChance }),
     weapon: weaponLine(u.weapon, u.ammo),
   };
 }
@@ -615,7 +635,7 @@ function openWorldInventory(after?: () => void): void {
         role: `${CLIQUES[m.clique].label} / ${CLASSES[m.schoolClass].label} Lv ${m.level}`,
         sprite: spriteKey(m),
         gear: gearOf(m),
-        stats: unitStats(m.hp, s.hp, s.aim, s.defense, s.mobility, s.crit),
+        stats: unitStats({ hp: m.hp, maxHp: s.hp, rangedAim: s.rangedAim, meleeAim: s.meleeAim, rangedDefense: s.rangedDefense, meleeDefense: s.meleeDefense, mobility: s.mobility, crit: s.crit }),
         weapon: weaponLine(w),
       };
     },
@@ -650,6 +670,7 @@ const battleButtons: Btn[] = [
 const worldButtons: Btn[] = [
   { label: 'Enter site (E)', key: 'e', run: () => enterSite(siteNear(world.pos)), enabled: () => !!siteNear(world.pos) },
   { label: 'Make camp (C)', key: 'c', run: () => openCamp(false), enabled: () => !over },
+  { label: 'Level up (U)', key: 'u', run: () => offerLevelUps(), enabled: () => !over && pendingCount(world.roster) > 0 },
   { label: 'Inventory (I)', key: 'i', run: () => openWorldInventory(), enabled: () => !over },
   { label: 'Debug overlay (G)', key: 'g', run: () => (worldView.debug = !worldView.debug), enabled: () => true, active: () => worldView.debug },
   { label: 'Sandbox: Beach (B)', key: 'b', run: () => startSandbox(0), enabled: () => true },
@@ -730,7 +751,7 @@ function renderPanel(sel: Unit | undefined): void {
           ? `${sel.weapon.name} ${sel.weapon.damage[0]}-${sel.weapon.damage[1]} dmg, adjacent only<br>`
           : `${sel.weapon.name} ${sel.weapon.damage[0]}-${sel.weapon.damage[1]} dmg, range ${sel.weapon.range} (full accuracy to ${sel.weapon.optimal})<br>`) +
         (sel.status?.length ? `<span style="color:#f2d04a">${esc(statusLine(sel))}</span><br>` : '') +
-        `Aim ${sel.aim} &middot; Def ${sel.defense} &middot; Move ${sel.mobility}/${sel.mobility * 2}` +
+        `Ranged ${sel.aim}/${sel.defense} &middot; Melee ${sel.meleeAim ?? sel.aim}/${sel.meleeDefense ?? sel.defense} &middot; Move ${sel.mobility}/${sel.mobility * 2}` +
         (member ? memberTags(member) : '') +
         `</div>`,
     );
@@ -756,7 +777,11 @@ function renderPanel(sel: Unit | undefined): void {
 
   lines.push(
     `<div style="margin-top:10px;opacity:.55;font-size:11px">Click tile: move &middot; click enemy: attack<br>` +
-      `M move &middot; F attack &middot; O overwatch &middot; V revive &middot; R reload &middot; E end turn &middot; Tab next &middot; W retreat<br>Skills: T throw &middot; A beaker &middot; H charm &middot; K incognito &middot; P patch up</div>`,
+      `M move &middot; F attack &middot; O overwatch &middot; V revive &middot; R reload &middot; E end turn &middot; Tab next &middot; W retreat` +
+      (sel?.skills?.length
+        ? `<br>Skills: ${sel.skills.map((id) => `${EXTRA_SKILLS[id]?.key.toUpperCase() ?? '?'} ${EXTRA_SKILLS[id]?.name ?? id}`).join(' &middot; ')}`
+        : '') +
+      `</div>`,
   );
   panel.innerHTML = lines.join('');
 }
@@ -1031,6 +1056,46 @@ function enterWorld(): void {
   if (started && !over) saveGame(world);
 }
 
+/** Open the level-up screen if anybody owes a choice. Safe to call whenever we land back on the map. */
+function offerLevelUps(): void {
+  if (mode !== 'world' || over || overlayOpen() || pendingCount(world.roster) === 0) return;
+  showLevelUp({
+    roster: world.roster,
+    onChange: () => {
+      lastWorldSig = '';
+      saveGame(world);
+      updateWorldPanel();
+    },
+    onClose: () => {
+      lastWorldSig = '';
+      saveGame(world);
+      updateWorldPanel();
+    },
+  });
+}
+
+/** Back to the map, then straight into any choices that are owed. */
+function returnToWorld(): void {
+  enterWorld();
+  offerLevelUps();
+}
+
+/** Experience from something that happened out in the world rather than in a fight. */
+function worldXp(amount: number, why: string): void {
+  if (amount <= 0 || over) return;
+  const notes = grantXp(world.roster, amount, world);
+  if (notes.length > 0) worldLog(`${why} (+${amount} XP each)`);
+  for (const n of notes) worldLog(n);
+}
+
+/** Somewhere new: a region or a site pays once, the first time the party stands in it. */
+function noteDiscovery(id: string, name: string): void {
+  world.seen ??= {};
+  if (world.seen[id]) return;
+  world.seen[id] = true;
+  worldXp(XP_DISCOVERY, `Found ${name}.`);
+}
+
 /** Why the run ended, for the log and the game-over panel. */
 const overText = (reason: GameOver): string => {
   const leader = world.roster.find((m) => m.protagonist)?.name ?? 'The leader';
@@ -1047,6 +1112,8 @@ function checkGameOver(outcome?: Outcome): boolean {
 }
 
 /** Return from a finished fight: rewards on victory; a defeat is a wipe, which ends the run. */
+let pendingSiteXp = 0;
+
 function finishBattle(opts: { leave?: boolean } = {}): void {
   const ctx = battleCtx;
   if (!ctx || !state.winner || ctx.sandbox) return;
@@ -1054,32 +1121,38 @@ function finishBattle(opts: { leave?: boolean } = {}): void {
   const report = applyBattleResult(world.roster, state, world);
   ensureStores(world).stash.push(...report.dropped);
   if (state.winner === 'player') {
+    const firstClear = !!ctx.site && !world.cleared[ctx.site.id];
     if (ctx.site) world.cleared[ctx.site.id] = true;
     world.scrap += ctx.reward;
     worldLog(`${ctx.label}: victory. +${ctx.reward} scrap.`);
+    if (firstClear && ctx.site) pendingSiteXp = XP_SITE_BASE + XP_SITE_PER_DIFFICULTY * (ctx.site.difficulty ?? 1);
   } else {
     worldLog(`${ctx.label}: defeat.`);
   }
   for (const note of report.notes) worldLog(note);
+  if (pendingSiteXp > 0 && !gameOverReason(world.roster, report.outcome)) {
+    worldXp(pendingSiteXp, `${ctx.site?.name ?? 'The site'} is yours for good.`);
+    pendingSiteXp = 0;
+  }
   checkGameOver(report.outcome);
   completeNight();
   const spoils = collectSpoils(state);
   if (opts.leave && !over) {
     // Walk away from it: the loot stays where it lies and anyone out cold is let go.
     for (const note of resolveSpoils(world, spoils, { take: [], fates: {} }, world)) worldLog(note);
-    enterWorld();
+    returnToWorld();
     return;
   }
   if (over || (spoils.loot.length === 0 && spoils.prisoners.length === 0)) {
     if (!over) resolveSpoils(world, spoils, { take: [], fates: {} }, world); // still counts the rivals who died
-    enterWorld();
+    returnToWorld();
     return;
   }
   // The field is ours: take what we want, then decide what to do with anyone left out cold.
   showSpoils(spoils, ctx.label, (choice) => {
     for (const note of resolveSpoils(world, spoils, choice, world)) worldLog(note);
     hideOverlay();
-    enterWorld();
+    returnToWorld();
   });
 }
 
@@ -1095,13 +1168,20 @@ function retreat(): void {
     checkGameOver();
     completeNight();
   }
-  enterWorld();
+  returnToWorld();
+}
+
+/** The squad's average level: what the rival schools have had to keep up with. */
+function squadLevel(): number {
+  const live = world.roster.filter((m) => !m.dead);
+  return live.length ? live.reduce((n, m) => n + m.level, 0) / live.length : 1;
 }
 
 function randomEncounter(region: Region): void {
   const d = Math.max(1, Math.min(4, region.danger));
   const scenario = encounterScenario({
     seed: Math.floor(rand(world) * 0x7fffffff),
+    level: squadLevel(),
     biome: region.biome,
     pods: d >= 3 ? 2 : 1,
     podSize: d === 2 ? 3 : 2,
@@ -1124,6 +1204,7 @@ function siteScenario(site: Site): Scenario {
   const d = site.difficulty ?? 1;
   return encounterScenario({
     seed: hashStr(site.id), // same layout every attempt: the site is a place, not a dice roll
+    level: squadLevel(),
     biome: regionAt(site).biome,
     pods: 1 + Math.ceil(d / 2),
     podSize: d === 1 ? 2 : 3,
@@ -1149,7 +1230,7 @@ function openCamp(safe: boolean): void {
         hideOverlay();
         const d = Math.max(1, danger);
         beginBattle(
-          encounterScenario({ seed: Math.floor(rand(world) * 0x7fffffff), biome: region.biome, pods: 1, podSize: d >= 3 ? 3 : 2, difficulty: d, ambush: true }),
+          encounterScenario({ seed: Math.floor(rand(world) * 0x7fffffff), level: squadLevel(), biome: region.biome, pods: 1, podSize: d >= 3 ? 3 : 2, difficulty: d, ambush: true }),
           { label: `Night ambush in ${region.name}`, site: null, reward: d * 2, sandbox: false, ambush: true, banner: 'Ambush' },
         );
         return { ambush: true, notes: [] };
@@ -1208,7 +1289,7 @@ function enterSite(site: Site | null): void {
 
 /** Traits and active injuries as extra panel lines. */
 function memberTags(m: RosterMember): string {
-  const traits = m.traits.map((t) => TRAITS[t].name).join(', ');
+  const traits = [...m.traits.map((t) => TRAITS[t].name), ...m.perks.map((id) => PERKS[id]?.name ?? id)].join(', ');
   const hurt = m.injuries.map((i) => (INJURIES[i.id].permanent ? INJURIES[i.id].name : `${INJURIES[i.id].name} (${i.left} day${i.left === 1 ? '' : 's'})`)).join(', ');
   return (
     (traits ? `<br><span style="opacity:.75">${traits}</span>` : '') + (hurt ? `<br><span style="color:#e0674e">${hurt}</span>` : '')
@@ -1229,14 +1310,16 @@ function rosterHtml(roster: RosterMember[]): string {
     const hpColor = m.hp >= max ? '#6fcf7a' : m.hp / max > 0.4 ? '#e8b04a' : '#e0674e';
     return (
       `<div style="margin-top:4px"><b>${esc(m.name)}${m.protagonist ? ' (you)' : ''}</b> <span style="opacity:.7">${CLIQUES[m.clique].label} / ${CLASSES[m.schoolClass].label} Lv ${m.level}</span><br>` +
-      `<span style="color:${hpColor}">HP ${m.hp}/${max}</span> &middot; ${xp}${memberTags(m)}</div>`
+      `<span style="color:${hpColor}">HP ${m.hp}/${max}</span> &middot; ${xp}` +
+      (m.pending.length ? ` &middot; <b style="color:#e8b04a">${m.pending.length} to spend (U)</b>` : '') +
+      `${memberTags(m)}</div>`
     );
   });
   return `<div style="margin-top:8px;border-top:1px solid #22303c;padding-top:6px"><b>Squad</b>${rows.join('')}</div>`;
 }
 
 const rosterSig = (roster: RosterMember[]): string =>
-  roster.map((m) => [m.dead, m.hp, m.level, m.xp, m.traits.join(), m.injuries.map((i) => `${i.id}${i.left}`).join()].join(':')).join('|');
+  roster.map((m) => [m.dead, m.hp, m.level, m.xp, m.pending.length, m.perks.join(), m.traits.join(), m.injuries.map((i) => `${i.id}${i.left}`).join()].join(':')).join('|');
 
 // ---------- world panel ----------
 
@@ -1403,11 +1486,13 @@ function startNewGame(): void {
 function loadLastSave(): void {
   const saved = loadGame();
   if (!saved) return;
+  if (migrateRoster(saved.roster, saved)) saved.log.push('Your squad has grown into the new way of doing things: spend what they have earned.');
   resetWorld(saved);
   over = null;
   started = true;
   hideOverlay();
   enterWorld();
+  offerLevelUps();
 }
 
 if (params.has('quick')) {
@@ -1427,6 +1512,12 @@ function frame(now: number): void {
     const ev = over || overlayOpen() ? null : stepWorld(world, dt, heldInput());
     if (ev) randomEncounter(ev.region);
     else {
+      if (started && !over && !overlayOpen()) {
+        const here = regionAt(world.pos);
+        noteDiscovery(`r:${here.id}`, here.name);
+        const at = siteNear(world.pos);
+        if (at) noteDiscovery(`s:${at.id}`, at.name);
+      }
       updateWorldPanel();
       worldRenderer.draw(world, worldView);
     }
@@ -1454,6 +1545,11 @@ if (params.has('debug')) {
       enterSite: (id: string) => enterSite(siteById(id) ?? null),
       clearSave,
       encounter: () => randomEncounter(regionAt(world.pos)),
+      xp: (n: number) => {
+        worldXp(n, 'Debug experience.');
+        updateWorldPanel();
+      },
+      levelUp: () => offerLevelUps(),
       finish: () => finishBattle(),
     },
   });

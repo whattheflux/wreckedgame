@@ -33,7 +33,7 @@ function decide(state: GameState, u: Unit): Action {
   const reach = reachableFor(state, u);
   const watchers = players.filter((p) => p.overwatch && p.ammo > 0);
   const isWatched = (pos: Pos): boolean =>
-    watchers.some((o) => computeShot(state.map, o, o.pos, { defense: u.defense, pos, hp: u.hp }, true).canShoot);
+    watchers.some((o) => computeShot(state.map, o, o.pos, { defense: u.defense, meleeDefense: u.meleeDefense, pos, hp: u.hp }, true).canShoot);
   const allies = living(state, 'enemy').filter((a) => a.id !== u.id && !a.dormant);
 
   // 1. Already fired this turn and out in the open: shoot-and-scoot into cover, staying within weapon range.

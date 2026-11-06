@@ -20,7 +20,22 @@ export interface EncounterOptions {
   difficulty: number;
   /** the enemy is already on top of you (a night attack): pods start close to the squad instead of out of sight */
   ambush?: boolean;
+  /**
+   * The squad's average level. Rival schools have been surviving the island too, so they toughen up
+   * alongside you: a run that levels the squad to the cap does not end up swatting children.
+   */
+  level?: number;
 }
+
+/** What one level of the squad's experience is worth to the people they meet. */
+export const VET_AIM = 2;
+export const VET_HP = 1;
+export const VET_DEFENSE = 1;
+/** However long a run goes on, rivals stop improving here (the squad still has perks and gear). */
+export const VET_CAP = 8;
+
+/** How much tougher rivals are for a squad of this average level. */
+export const veterancy = (level = 1): number => Math.max(0, Math.min(VET_CAP, Math.round(level) - 1));
 
 /** How cluttered each ground type is. Counts are attempts; sizes are max edge length in tiles. */
 interface Profile {
@@ -120,7 +135,7 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
   const squadCentre: Pos = { x: 3, y: cy };
 
   const podCentres: Pos[] = [];
-  const minX = opts.ambush ? squadCentre.x + 5 : Math.ceil(squadCentre.x + SIGHT_RANGE + 3); // comfortably outside sight range, unless they are jumping you
+  const minX = opts.ambush ? squadCentre.x + 5 : Math.ceil(squadCentre.x + SIGHT_RANGE + 3); // comfortably outside the usual sight range, unless they are jumping you
   for (let tries = 0; podCentres.length < pods && tries < 400; tries++) {
     const p = { x: ri(minX, opts.ambush ? Math.min(W - 5, minX + 5) : W - 5), y: ri(3, H - 4) };
     if (podCentres.some((q) => dist(p, q) < MIN_POD_GAP)) continue;
@@ -143,7 +158,17 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
       n++;
       const weapon = weaponFor(diff, m + pi);
       const kid = crew.members[n - 1];
-      const spec = foe(`e${n}`, kid.name, pos.x, pos.y, podId, weapon, 7 + diff + (weapon === WEAPONS.pole || weapon.melee ? 2 : 0), 52 + diff * 4);
+      const vet = veterancy(opts.level);
+      const spec = foe(
+        `e${n}`,
+        kid.name,
+        pos.x,
+        pos.y,
+        podId,
+        weapon,
+        7 + diff + (weapon === WEAPONS.pole || weapon.melee ? 2 : 0) + vet * VET_HP,
+        52 + diff * 4 + vet * VET_AIM,
+      );
       // What they carry rolls from its own stream so it never disturbs the map. Worn pieces make them harder to hurt.
       const weaponKey = (Object.keys(WEAPONS) as Array<keyof typeof WEAPONS>).find((k) => WEAPONS[k] === weapon) ?? 'slingshot';
       const gear = rivalGear(weaponKey, diff, { rngState: Math.imul(opts.seed | 0, 7919) + n });
@@ -155,9 +180,11 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
         gear,
         weapon: weaponOfGear(gear),
         hp: spec.hp + mods.hp,
-        defense: spec.defense + mods.defense,
+        defense: spec.defense + mods.rangedDefense + vet * VET_DEFENSE,
+        meleeDefense: spec.defense + mods.meleeDefense + vet * VET_DEFENSE,
         mobility: spec.mobility + mods.mobility,
-        aim: spec.aim + mods.aim,
+        aim: spec.aim + mods.rangedAim,
+        meleeAim: spec.aim + mods.meleeAim,
         crit: spec.crit + mods.crit,
       });
     }

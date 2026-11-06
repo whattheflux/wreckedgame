@@ -8,7 +8,9 @@ import type { WorldState } from './world';
  */
 
 export const SAVE_KEY = 'wrecked.save';
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
+/** Versions still worth loading; anything older is repaired by `migrateRoster` on the way in. */
+export const LOADABLE_VERSIONS = [2, 3];
 
 export type KeyValueStore = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
@@ -65,7 +67,7 @@ export function loadGame(store: KeyValueStore | null = defaultStore()): WorldSta
     const raw = store.getItem(SAVE_KEY);
     if (!raw) return null;
     const file = JSON.parse(raw) as SaveFile;
-    if (file.v !== SAVE_VERSION || !isValidWorld(file.world)) return null;
+    if (!LOADABLE_VERSIONS.includes(file.v) || !isValidWorld(file.world)) return null;
     return file.world;
   } catch {
     return null;

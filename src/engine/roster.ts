@@ -2,73 +2,102 @@ import type { Scenario, UnitSpec } from './battle';
 import type { GameState, Unit, Weapon } from './types';
 import { WEAPONS } from './scenarios';
 import { rand, type RngHolder } from './rng';
-import { skillIdsFor } from './skills';
 import { gearMods, startingGear, weaponOfGear, weaponOfItem, type Gear, type ItemId } from './items';
+import {
+  ATTR_IDS,
+  ATTR_MAX,
+  COMBAT_SKILLS,
+  STAT_FLOOR,
+  addMods,
+  attributeStats,
+  canRaise,
+  canTrain,
+  combatStats,
+  MAX_MOBILITY,
+  luckFactor,
+  xpMultiplier,
+  zeroAttributes,
+  zeroCombat,
+  type AttrId,
+  type Attributes,
+  type CombatSkillId,
+  type CombatSkills,
+  type StatBlock,
+  type StatMods,
+} from './attributes';
+import { CLASS_POOL, CLASS_STARTER, CLIQUE_POOL, CLIQUE_STARTER, PERKS, grantedSkills, offerPerks, perkFlags, perkMods, type PerkFlag } from './perks';
 
 /**
  * The persistent squad. Everything here is plain JSON (saveable) and pure logic, like the rest of
  * the engine. A roster member outlives any single battle: it is turned into a battle unit by
  * `deployRoster`, and the battle's outcome is folded back in by `applyBattleResult`.
  *
- * Stats are never stored. They are derived from clique + level + traits + injuries by
- * `effectiveStats`, so they cannot drift out of sync with the things that cause them.
+ * Stats are never stored. They are derived from attributes + combat skills + traits + injuries +
+ * perks + gear by `effectiveStats`, so they cannot drift out of sync with the things that cause them.
+ *
+ * Levelling hands out *pending picks* rather than numbers: the player spends them (see `spendAttribute`,
+ * `spendCombat`, `takePerk`). What a perk pick offers is drawn when the level happens and stored, so
+ * closing the screen cannot reroll it.
  */
+
+export type { AttrId, Attributes, CombatSkillId, CombatSkills, StatBlock, StatMods };
 
 // ---------- data tables ----------
 
-/** Who you are: the social group. Sets the stat line and growth. */
+/** Who you are: the social group. Sets the starting attribute spread and the clique perk pool. */
 export type Clique = 'popular' | 'jock' | 'nerd' | 'drama' | 'weirdo' | 'stoner';
-/** What you studied: the school specialty. Sets the weapon and nudges stats; abilities and tech-tree branches hang off it later. */
+/** What you studied: the school specialty. Sets the starting weapon, nudges attributes, and picks the class perk pool. */
 export type SchoolClass = 'sport' | 'science' | 'drama' | 'art' | 'homeec' | 'woodwork' | 'metalwork';
 export type WeaponId = keyof typeof WEAPONS;
-
-export interface StatBlock {
-  hp: number;
-  mobility: number;
-  aim: number;
-  defense: number;
-  crit: number;
-}
 
 export interface CliqueDef {
   label: string;
   blurb: string;
-  /** level-1 stats */
-  base: StatBlock;
-  /** flat gain per level after the first */
-  growth: Omit<StatBlock, 'mobility'>;
-  /** +1 mobility every N levels; 0 = never */
-  mobilityEvery: number;
+  /** level-1 attributes; every clique spends the same total, laid out differently */
+  attrs: Attributes;
 }
 
-/** Each clique has a strength and a weakness, so no combination with a class is a trap. */
+const attrs = (strength: number, charm: number, hustle: number, observation: number, luck: number, aptitude: number, resilience: number): Attributes => ({
+  strength,
+  charm,
+  hustle,
+  observation,
+  luck,
+  aptitude,
+  resilience,
+});
+
+/** Every clique starts with the same number of attribute points, spent differently. */
+export const CLIQUE_ATTR_TOTAL = 24;
+
 export const CLIQUES: Record<Clique, CliqueDef> = {
-  popular: { label: 'Popular', blurb: 'Everyone knows them. Quick and hard to hit, but fragile.', base: { hp: 10, mobility: 6, aim: 72, defense: 10, crit: 10 }, growth: { hp: 1, aim: 2, defense: 1, crit: 1 }, mobilityEvery: 3 },
-  jock: { label: 'Jock', blurb: 'Built to take a hit, but easy to hit back.', base: { hp: 14, mobility: 5, aim: 62, defense: 0, crit: 5 }, growth: { hp: 2, aim: 1, defense: 0, crit: 1 }, mobilityEvery: 0 },
-  nerd: { label: 'Nerd', blurb: 'Hits what they aim at, but folds when hit.', base: { hp: 9, mobility: 5, aim: 75, defense: 0, crit: 5 }, growth: { hp: 1, aim: 2, defense: 0, crit: 1 }, mobilityEvery: 0 },
-  drama: { label: 'Drama kid', blurb: 'Lives for the big moment. Lucky crits, middling nerve.', base: { hp: 11, mobility: 5, aim: 66, defense: 5, crit: 10 }, growth: { hp: 1, aim: 1, defense: 1, crit: 2 }, mobilityEvery: 0 },
-  weirdo: { label: 'Weirdo', blurb: 'Unpredictable. Huge crits, shaky everything else.', base: { hp: 10, mobility: 5, aim: 66, defense: 5, crit: 15 }, growth: { hp: 1, aim: 1, defense: 0, crit: 2 }, mobilityEvery: 0 },
-  stoner: { label: 'Stoner', blurb: 'Unbothered. Sturdy and hard to rattle, slow and a poor shot.', base: { hp: 12, mobility: 4, aim: 60, defense: 10, crit: 8 }, growth: { hp: 2, aim: 1, defense: 1, crit: 1 }, mobilityEvery: 0 },
+  popular: { label: 'Popular', blurb: 'Everyone knows them. Quick and persuasive, not built to take a hit.', attrs: attrs(3, 7, 4, 3, 3, 2, 2) },
+  jock: { label: 'Jock', blurb: 'Strong, fast and hard to put down. Not the sharpest eye on the island.', attrs: attrs(7, 2, 4, 2, 2, 2, 5) },
+  nerd: { label: 'Nerd', blurb: 'Sees everything first and learns fastest. Folds when hit.', attrs: attrs(2, 2, 3, 6, 2, 7, 2) },
+  drama: { label: 'Drama kid', blurb: 'No weak spot and no strong one, with a gift for talking people round.', attrs: attrs(3, 5, 4, 3, 3, 3, 3) },
+  weirdo: { label: 'Weirdo', blurb: 'Impossible to read, improbably lucky, hits harder than they have any right to.', attrs: attrs(3, 2, 4, 3, 7, 3, 2) },
+  stoner: { label: 'Stoner', blurb: 'Unbothered and very hard to finish off. In no particular hurry.', attrs: attrs(4, 3, 2, 2, 4, 3, 6) },
 };
 
 export interface ClassDef {
   label: string;
   blurb: string;
   weapon: WeaponId;
-  /** added to the clique's level-1 stats */
-  base: Partial<StatBlock>;
-  /** added to the clique's per-level growth */
-  growth: Partial<Omit<StatBlock, 'mobility'>>;
+  /** added to the clique's level-1 attributes */
+  attrs: Partial<Attributes>;
 }
 
+/** Every class adds the same number of attribute points on top of the clique's spread. */
+export const CLASS_ATTR_BONUS = 3;
+
 export const CLASSES: Record<SchoolClass, ClassDef> = {
-  sport: { label: 'Sport', blurb: 'Athletic and quick on their feet. Throws a javelin.', weapon: 'javelin', base: { hp: 2, mobility: 1 }, growth: { hp: 1 } },
-  science: { label: 'Science', blurb: 'Careful and precise. Fires flares.', weapon: 'flareGun', base: { aim: 3 }, growth: { aim: 1 } },
-  drama: { label: 'Drama', blurb: 'Stagecraft and nerve. Slingshot.', weapon: 'slingshot', base: { defense: 3, crit: 3 }, growth: { crit: 1 } },
-  art: { label: 'Art', blurb: 'A good eye for a target. Slingshot.', weapon: 'slingshot', base: { aim: 2, crit: 4 }, growth: { aim: 1 } },
-  homeec: { label: 'Home Ec', blurb: 'Patches people up. Slingshot.', weapon: 'slingshot', base: { hp: 1, defense: 2 }, growth: { hp: 1, defense: 1 } },
-  woodwork: { label: 'Woodwork', blurb: 'Handy with a sharpened pole.', weapon: 'pole', base: { hp: 1, aim: 2 }, growth: { hp: 1, aim: 1 } },
-  metalwork: { label: 'Metalwork', blurb: 'Sturdy and heavy-handed, but slow. Sharpened pole.', weapon: 'pole', base: { hp: 3, defense: 3, mobility: -1 }, growth: { hp: 1, defense: 1 } },
+  sport: { label: 'Sport', blurb: 'Athletic and quick on their feet. Throws a javelin, and anything else to hand.', weapon: 'javelin', attrs: { strength: 1, hustle: 2 } },
+  science: { label: 'Science', blurb: 'Careful, precise, and holding the chemistry store key. Fires flares.', weapon: 'flareGun', attrs: { observation: 2, aptitude: 1 } },
+  drama: { label: 'Drama', blurb: 'Stagecraft and nerve, and a slingshot.', weapon: 'slingshot', attrs: { charm: 2, luck: 1 } },
+  art: { label: 'Art', blurb: 'A good eye for a target and a jar of paint. Slingshot.', weapon: 'slingshot', attrs: { observation: 2, luck: 1 } },
+  homeec: { label: 'Home Ec', blurb: 'Patches people up and keeps them fed. Slingshot.', weapon: 'slingshot', attrs: { charm: 1, aptitude: 1, resilience: 1 } },
+  woodwork: { label: 'Woodwork', blurb: 'Handy with a sharpened pole and steady on their feet.', weapon: 'pole', attrs: { strength: 1, observation: 1, resilience: 1 } },
+  metalwork: { label: 'Metalwork', blurb: 'Sturdy and heavy-handed. Sharpened pole, and plans for something better.', weapon: 'pole', attrs: { strength: 2, resilience: 1 } },
 };
 
 export type TraitId = 'sure-footed' | 'eagle-eyed' | 'tough' | 'thick-skinned' | 'jumpy' | 'showboat';
@@ -76,9 +105,10 @@ export type TraitId = 'sure-footed' | 'eagle-eyed' | 'tough' | 'thick-skinned' |
 export interface TraitDef {
   name: string;
   blurb: string;
-  mods: Partial<StatBlock>;
+  mods: StatMods;
 }
 
+/** Quirks. One is settled on each character when they are made; they are never handed out later. */
 export const TRAITS: Record<TraitId, TraitDef> = {
   'sure-footed': { name: 'Sure-footed', blurb: 'Never trips on roots.', mods: { mobility: 1 } },
   'eagle-eyed': { name: 'Eagle-eyed', blurb: 'Spots the gap in the cover.', mods: { aim: 5 } },
@@ -88,8 +118,7 @@ export const TRAITS: Record<TraitId, TraitDef> = {
   showboat: { name: 'Showboat', blurb: 'Goes for the highlight reel.', mods: { crit: 10, aim: -5 } },
 };
 
-/** Levels at which a member picks up a new trait (random, from the ones they don't have). */
-export const TRAIT_LEVELS: readonly number[] = [2, 4];
+export const TRAIT_IDS = Object.keys(TRAITS) as TraitId[];
 
 export type InjuryId =
   | 'twisted-ankle'
@@ -108,7 +137,7 @@ export type BodyPart = 'head' | 'chest' | 'arm' | 'leg' | 'mind';
 export interface InjuryDef {
   name: string;
   part: BodyPart;
-  mods: Partial<StatBlock>;
+  mods: StatMods;
   /** days of rest (or completed fights) until it heals; 0 for a permanent one */
   recovery: number;
   /** never heals: a scar the character lives with */
@@ -118,15 +147,15 @@ export interface InjuryDef {
 
 export const INJURIES: Record<InjuryId, InjuryDef> = {
   'twisted-ankle': { name: 'Twisted ankle', part: 'leg', mods: { mobility: -1 }, recovery: 2, blurb: 'Slows you down.' },
-  concussion: { name: 'Concussion', part: 'head', mods: { aim: -10 }, recovery: 2, blurb: 'Vision swims.' },
+  concussion: { name: 'Concussion', part: 'head', mods: { aim: -10, sight: -2 }, recovery: 2, blurb: 'Vision swims.' },
   'cracked-ribs': { name: 'Cracked ribs', part: 'chest', mods: { hp: -3 }, recovery: 3, blurb: 'Every breath hurts.' },
   shaken: { name: 'Shaken up', part: 'mind', mods: { aim: -5, crit: -5 }, recovery: 1, blurb: 'Hands will not stay still.' },
   'broken-nose': { name: 'Broken nose', part: 'head', mods: { aim: -3, crit: -3 }, recovery: 3, blurb: 'Eyes streaming.' },
   'torn-tendon': { name: 'Torn tendon', part: 'arm', mods: { aim: -8 }, recovery: 6, blurb: 'The arm will not hold steady. Slow to mend.' },
   'deep-gash': { name: 'Deep gash', part: 'chest', mods: { hp: -2 }, recovery: 3, blurb: 'Keeps reopening.' },
-  'lost-hand': { name: 'Lost a hand', part: 'arm', mods: { aim: -6 }, recovery: 0, permanent: true, blurb: 'One hand only: no two-handed weapons.' },
+  'lost-hand': { name: 'Lost a hand', part: 'arm', mods: { meleeAim: -10, rangedAim: -6 }, recovery: 0, permanent: true, blurb: 'One hand only: no two-handed weapons.' },
   'lost-leg': { name: 'Lost a leg', part: 'leg', mods: { mobility: -2 }, recovery: 0, permanent: true, blurb: 'Hobbles on a crutch.' },
-  'blind-eye': { name: 'Blind in one eye', part: 'head', mods: { aim: -8, crit: -3 }, recovery: 0, permanent: true, blurb: 'Judging distance is harder.' },
+  'blind-eye': { name: 'Blind in one eye', part: 'head', mods: { rangedAim: -10, crit: -3, sight: -3 }, recovery: 0, permanent: true, blurb: 'Judging distance is harder.' },
 };
 
 export const INJURY_IDS = Object.keys(INJURIES) as InjuryId[];
@@ -139,20 +168,56 @@ export const severityOf = (id: InjuryId): Severity => (INJURIES[id].permanent ? 
 /** A member can carry at most this many healing injuries; a further one replaces whichever is closest to healing. Permanent ones are extra. */
 export const MAX_INJURIES = 2;
 
-/** Stat floors so stacked penalties can't make a unit useless. */
-export const STAT_FLOOR: StatBlock = { hp: 4, mobility: 3, aim: 30, defense: 0, crit: 0 };
-
-/** A real fall (the leader going down) is a permanent scar this often; battered survivors only get ones that heal. */
+/** A real fall (the leader going down) is a permanent scar this often; battered survivors only get ones that heal. Luck shortens both. */
 export const PERMANENT_ON_FALL = 0.15;
 export const BATTERED_BELOW = 0.35;
 export const BATTERED_CHANCE = 0.4;
 
-export const MAX_LEVEL = 6;
+// ---------- levelling ----------
+
+export const MAX_LEVEL = 12;
 export const XP_PARTICIPATION = 8;
 export const XP_PER_HIT = 2;
 export const XP_PER_KILL = 12;
 export const XP_VICTORY = 10;
-export const xpToNext = (level: number): number => (level >= MAX_LEVEL ? Infinity : 40 * level);
+/** Away from the battlefield: clearing a site for good, finding somewhere new, a job done at camp. */
+export const XP_SITE_BASE = 12;
+export const XP_SITE_PER_DIFFICULTY = 6;
+export const XP_DISCOVERY = 6;
+export const XP_CAMP_TASK = 5;
+
+/** Hand the same experience to everyone still standing (a shared world event). Returns the log lines. */
+export function grantXp(roster: Roster, amount: number, rng: RngHolder): string[] {
+  const notes: string[] = [];
+  for (const m of livingSquad(roster)) addXp(m, amount, rng, notes);
+  return notes;
+}
+
+/** Experience for the next level. Flat-ish early, steeper later; `MAX_LEVEL` needs none. */
+export const xpToNext = (level: number): number => (level >= MAX_LEVEL ? Infinity : 40 + 25 * (level - 1));
+
+/** A class perk every this many levels, a clique perk every this many, this many options each time. */
+export const CLASS_PERK_EVERY = 3;
+export const CLIQUE_PERK_EVERY = 6;
+export const PERK_OPTIONS = 2;
+
+export type PickKind = 'attribute' | 'combat' | 'classPerk' | 'cliquePerk';
+
+export const PICK_LABEL: Record<PickKind, string> = {
+  attribute: 'Attribute point',
+  combat: 'Combat training',
+  classPerk: 'Class perk',
+  cliquePerk: 'Clique perk',
+};
+
+/** Something the player still has to choose. Perk picks carry the options they were offered. */
+export interface PendingPick {
+  kind: PickKind;
+  /** the level that handed it out */
+  level: number;
+  /** perk ids on offer, fixed when the level happened */
+  options?: string[];
+}
 
 // ---------- model ----------
 
@@ -171,6 +236,14 @@ export interface RosterMember {
   level: number;
   /** progress toward the next level */
   xp: number;
+  /** the seven SCHOLAR attributes */
+  attributes: Attributes;
+  /** points put into each combat skill */
+  combat: CombatSkills;
+  /** perk ids owned, in the order they were taken */
+  perks: string[];
+  /** choices the player still owes */
+  pending: PendingPick[];
   traits: TraitId[];
   injuries: Injury[];
   weapon: WeaponId;
@@ -184,7 +257,7 @@ export interface RosterMember {
   protagonist: boolean;
   /** the player character's body, which picks their art (absent on companions and on older saves) */
   look?: Look;
-  /** has had their makeover (see MAKEOVERS): swaps to the `<name>-makeover` art when there is some, else keeps the old look */
+  /** has had their makeover (see MAKEOVERS): swaps to the `<name>-makeover` art when there is some */
   makeover?: boolean;
 }
 
@@ -229,6 +302,38 @@ const COMPANIONS: Array<{ id: string; name: string; clique: Clique; schoolClass:
   { id: 'p4', name: 'Anna', clique: 'drama', schoolClass: 'drama' },
 ];
 
+// ---------- making one ----------
+
+/** Level-1 attributes: the clique's spread plus what the class adds. */
+export function startingAttributes(clique: Clique, schoolClass: SchoolClass): Attributes {
+  const a = { ...CLIQUES[clique].attrs };
+  for (const [k, v] of Object.entries(CLASSES[schoolClass].attrs)) a[k as AttrId] += v ?? 0;
+  return a;
+}
+
+/** The perks a character is simply born with: their clique's and their class's signature. */
+export function startingPerks(clique: Clique, schoolClass: SchoolClass): string[] {
+  return [...new Set([CLIQUE_STARTER[clique], CLASS_STARTER[schoolClass]].filter(Boolean))];
+}
+
+/**
+ * The one quirk a character has. Settled from who they are rather than rolled, so it is stable
+ * across saves and the same character is always the same person.
+ */
+export function startingTrait(name: string, clique: Clique, schoolClass: SchoolClass): TraitId {
+  const key = `${name}|${clique}|${schoolClass}`;
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  // final avalanche, or short keys that differ late all land in the same bucket
+  h ^= h >>> 16;
+  h = Math.imul(h, 2246822507);
+  h ^= h >>> 13;
+  return TRAIT_IDS[(h >>> 0) % TRAIT_IDS.length];
+}
+
 export function newMember(id: string, name: string, clique: Clique, schoolClass: SchoolClass, protagonist = false, look?: Look): RosterMember {
   const m: RosterMember = {
     id,
@@ -237,7 +342,11 @@ export function newMember(id: string, name: string, clique: Clique, schoolClass:
     schoolClass,
     level: 1,
     xp: 0,
-    traits: [],
+    attributes: startingAttributes(clique, schoolClass),
+    combat: zeroCombat(),
+    perks: startingPerks(clique, schoolClass),
+    pending: [],
+    traits: [startingTrait(name, clique, schoolClass)],
     injuries: [],
     weapon: CLASSES[schoolClass].weapon,
     gear: startingGear(CLASSES[schoolClass].weapon, protagonist),
@@ -250,7 +359,7 @@ export function newMember(id: string, name: string, clique: Clique, schoolClass:
   return m;
 }
 
-/** The player character plus the four friends: level 1, no traits, full health. */
+/** The player character plus the four friends: level 1, nothing spent, full health. */
 export function createStarterRoster(player: PlayerChoice = DEFAULT_PLAYER): Roster {
   const name = player.name.trim().slice(0, 16) || DEFAULT_PLAYER.name;
   return [newMember(PLAYER_ID, name, player.clique, player.schoolClass, true, player.look), ...COMPANIONS.map((c) => newMember(c.id, c.name, c.clique, c.schoolClass))];
@@ -288,34 +397,149 @@ export function gameOverReason(roster: Roster, outcome?: Outcome): GameOver | nu
 
 // ---------- derived stats ----------
 
-export function baseStats(clique: Clique, schoolClass: SchoolClass, level: number): StatBlock {
-  const c = CLIQUES[clique];
-  const k = CLASSES[schoolClass];
-  const n = level - 1;
-  return {
-    hp: c.base.hp + (k.base.hp ?? 0) + (c.growth.hp + (k.growth.hp ?? 0)) * n,
-    mobility: c.base.mobility + (k.base.mobility ?? 0) + (c.mobilityEvery > 0 ? Math.floor(n / c.mobilityEvery) : 0),
-    aim: c.base.aim + (k.base.aim ?? 0) + (c.growth.aim + (k.growth.aim ?? 0)) * n,
-    defense: c.base.defense + (k.base.defense ?? 0) + (c.growth.defense + (k.growth.defense ?? 0)) * n,
-    crit: c.base.crit + (k.base.crit ?? 0) + (c.growth.crit + (k.growth.crit ?? 0)) * n,
-  };
-}
+/** The active skills this member knows, from their perks. */
+export const skillsFor = (m: RosterMember): string[] => grantedSkills(m.perks ?? []);
 
-/** Clique + class + level, then traits, then injuries, then what they wear, then floors. */
+/** The rule flags this member's perks turn on. */
+export const flagsFor = (m: RosterMember): PerkFlag[] => perkFlags(m.perks ?? []);
+
+/** Attributes, then trained combat skills, then quirks, injuries, perks and what they are wearing, then floors. */
 export function effectiveStats(m: RosterMember): StatBlock {
-  const s = baseStats(m.clique, m.schoolClass, m.level);
-  const add = (mods: Partial<StatBlock>): void => {
-    for (const k of Object.keys(mods) as Array<keyof StatBlock>) s[k] += mods[k] ?? 0;
-  };
-  for (const t of m.traits) add(TRAITS[t].mods);
-  for (const i of m.injuries) add(INJURIES[i.id].mods);
-  add(gearMods(gearOf(m)));
+  const s = attributeStats(m.attributes ?? zeroAttributes());
+  addMods(s, combatStats(m.combat ?? zeroCombat()));
+  for (const t of m.traits ?? []) addMods(s, TRAITS[t]?.mods);
+  for (const i of m.injuries ?? []) addMods(s, INJURIES[i.id]?.mods);
+  for (const mod of perkMods(m.perks ?? [])) addMods(s, mod);
+  addMods(s, gearMods(gearOf(m)));
   for (const k of Object.keys(s) as Array<keyof StatBlock>) s[k] = Math.max(STAT_FLOOR[k], s[k]);
+  s.mobility = Math.min(MAX_MOBILITY, s.mobility);
   return s;
 }
 
 /** What they hit with: whatever is in their hands. */
 export const weaponOf = (m: RosterMember): Weapon => weaponOfGear(gearOf(m));
+
+// ---------- spending what a level handed out ----------
+
+/** What this level hands out: a point of attributes and a point of training every time, perks on their own schedule. */
+export function picksForLevel(m: RosterMember, level: number, rng: RngHolder): PendingPick[] {
+  const out: PendingPick[] = [{ kind: 'attribute', level }, { kind: 'combat', level }];
+  // Anything already on the table counts as spoken for: levelling several times at once (or a save
+  // being brought up to date) must not put the same perk in front of the player twice.
+  const owned = [...m.perks, ...(m.pending ?? []).flatMap((p) => p.options ?? [])];
+  if (level % CLASS_PERK_EVERY === 0) {
+    const options = offerPerks(CLASS_POOL[m.schoolClass] ?? [], owned, rng, PERK_OPTIONS);
+    if (options.length > 0) {
+      out.push({ kind: 'classPerk', level, options });
+      owned.push(...options); // so a clique pick in the same level cannot offer the same perk twice
+    }
+  }
+  if (level % CLIQUE_PERK_EVERY === 0) {
+    const options = offerPerks(CLIQUE_POOL[m.clique] ?? [], owned, rng, PERK_OPTIONS);
+    if (options.length > 0) out.push({ kind: 'cliquePerk', level, options });
+  }
+  return out;
+}
+
+export const pendingOf = (m: RosterMember, kind: PickKind): PendingPick | undefined => (m.pending ?? []).find((p) => p.kind === kind);
+export const hasPending = (m: RosterMember): boolean => (m.pending ?? []).length > 0;
+export const pendingCount = (roster: Roster): number => roster.filter((m) => !m.dead).reduce((n, m) => n + (m.pending?.length ?? 0), 0);
+
+export interface PickResult {
+  ok: boolean;
+  error?: string;
+  /** a line for the log */
+  note?: string;
+}
+
+const noPick = (error: string): PickResult => ({ ok: false, error });
+
+function consume(m: RosterMember, kind: PickKind): boolean {
+  const i = (m.pending ?? []).findIndex((p) => p.kind === kind);
+  if (i < 0) return false;
+  m.pending.splice(i, 1);
+  return true;
+}
+
+/** Heal by however much a choice raised the ceiling, so a level-up is never a net loss of health. */
+function keepHealthy(m: RosterMember, beforeMax: number): void {
+  const after = effectiveStats(m).hp;
+  if (after > beforeMax) m.hp += after - beforeMax;
+  m.hp = Math.max(1, Math.min(m.hp, after));
+}
+
+/** Put the pending attribute point into one of the seven. */
+export function spendAttribute(m: RosterMember, id: AttrId): PickResult {
+  if (!pendingOf(m, 'attribute')) return noPick('No attribute point to spend.');
+  if (!canRaise(m.attributes, id)) return noPick(`${id} is already at ${ATTR_MAX}.`);
+  const before = effectiveStats(m).hp;
+  consume(m, 'attribute');
+  m.attributes[id] += 1;
+  keepHealthy(m, before);
+  return { ok: true, note: `${m.name}: ${id} ${m.attributes[id]}.` };
+}
+
+/** Put the pending training point into one of the five combat skills. */
+export function spendCombat(m: RosterMember, id: CombatSkillId): PickResult {
+  if (!pendingOf(m, 'combat')) return noPick('No training point to spend.');
+  if (!canTrain(m.combat, id)) return noPick(`${COMBAT_SKILLS[id].label} is fully trained.`);
+  const before = effectiveStats(m).hp;
+  consume(m, 'combat');
+  m.combat[id] += 1;
+  keepHealthy(m, before);
+  return { ok: true, note: `${m.name}: ${COMBAT_SKILLS[id].label} ${m.combat[id]}/${COMBAT_SKILLS[id].maxPoints}.` };
+}
+
+/** Take one of the perks on offer. Only the ones actually offered are allowed. */
+export function takePerk(m: RosterMember, perkId: string): PickResult {
+  const pick = (m.pending ?? []).find((p) => (p.kind === 'classPerk' || p.kind === 'cliquePerk') && p.options?.includes(perkId));
+  if (!pick) return noPick('That perk is not on offer.');
+  if (m.perks.includes(perkId)) return noPick('Already learned.');
+  if (PERKS[perkId]?.requires && !m.perks.includes(PERKS[perkId].requires as string)) return noPick('Something else has to come first.');
+  const before = effectiveStats(m).hp;
+  m.pending.splice(m.pending.indexOf(pick), 1);
+  m.perks.push(perkId);
+  keepHealthy(m, before);
+  return { ok: true, note: `${m.name} learns ${perkId}.` };
+}
+
+/**
+ * Spend everything still owing without asking: attribute points go to whatever is lowest among the
+ * clique's best three, training follows the weapon in hand, and perks take the first on offer. Used
+ * for companions when the player cannot be bothered, and whenever a level happens off-screen.
+ */
+export function autoSpend(m: RosterMember): string[] {
+  const notes: string[] = [];
+  let guard = 100;
+  while (hasPending(m) && guard-- > 0) {
+    const pick = m.pending[0];
+    if (pick.kind === 'attribute') {
+      // lean into what they are already good at, but spread across their best three rather than
+      // piling everything into one number
+      const strongest = [...ATTR_IDS].sort((a, b) => m.attributes[b] - m.attributes[a]).slice(0, 3);
+      const open = [...strongest, ...ATTR_IDS].filter((id) => canRaise(m.attributes, id));
+      const best = open.slice(0, 3).sort((a, b) => m.attributes[a] - m.attributes[b]);
+      const r = spendAttribute(m, best[0] ?? 'resilience');
+      if (!r.ok) consume(m, 'attribute');
+      else if (r.note) notes.push(r.note);
+    } else if (pick.kind === 'combat') {
+      const melee = !!weaponOf(m).melee;
+      const order: CombatSkillId[] = melee ? ['meleeAttack', 'meleeDefense', 'speed', 'rangedDefense', 'rangedAttack'] : ['rangedAttack', 'rangedDefense', 'speed', 'meleeDefense', 'meleeAttack'];
+      // same idea: the top three for this weapon, evened out
+      const open = order.filter((x) => canTrain(m.combat, x));
+      const id = open.slice(0, 3).sort((a, b) => m.combat[a] - m.combat[b])[0];
+      const r = id ? spendCombat(m, id) : noPick('');
+      if (!r.ok) consume(m, 'combat');
+      else if (r.note) notes.push(r.note);
+    } else {
+      const choice = pick.options?.[0];
+      const r = choice ? takePerk(m, choice) : noPick('');
+      if (!r.ok) m.pending.splice(0, 1);
+      else if (r.note) notes.push(r.note);
+    }
+  }
+  return notes;
+}
 
 // ---------- deployment: roster -> battle ----------
 
@@ -331,13 +555,18 @@ export function memberSpec(m: RosterMember, x: number, y: number): UnitSpec {
     hp: Math.min(m.hp, s.hp),
     maxHp: s.hp,
     mobility: s.mobility,
-    aim: s.aim,
-    defense: s.defense,
+    aim: s.rangedAim,
+    meleeAim: s.meleeAim,
+    defense: s.rangedDefense,
+    meleeDefense: s.meleeDefense,
+    sight: s.sight,
     crit: s.crit,
+    charm: m.attributes.charm,
     weapon: weaponOf(m),
     gear: { ...gearOf(m) },
     sprite: spriteKey(m),
-    skills: skillIdsFor(m.clique, m.schoolClass),
+    skills: skillsFor(m),
+    flags: flagsFor(m),
     ...(m.protagonist ? { protagonist: true } : {}),
   };
 }
@@ -367,6 +596,8 @@ export interface ResultReport {
   fallen: string[];
   /** gear that had to come off (a two-hander after losing a hand): the caller puts it in the stash */
   dropped: ItemId[];
+  /** ids of members who now owe the player a choice */
+  levelled: string[];
 }
 
 export type Fate = 'dead' | 'injured';
@@ -382,6 +613,8 @@ export const fateOfDowned = (_m: RosterMember, u: Unit): Fate => (u.downed ? 'in
 export interface ResultOptions {
   /** override the fate rule (defaults to `fateOfDowned`) */
   fate?: (m: RosterMember, u: Unit) => Fate;
+  /** spend every pick straight away instead of leaving them for the player (companions, headless runs) */
+  auto?: boolean;
 }
 
 export const outcomeOf = (state: GameState): Outcome => (state.winner === 'player' ? 'victory' : state.winner === 'enemy' ? 'defeat' : 'retreat');
@@ -460,28 +693,26 @@ export function tickInjuries(m: { name: string; injuries: Injury[] }, notes: str
   return healed;
 }
 
+/**
+ * Hand a member experience. Aptitude makes it go further. Every level reached queues the choices
+ * that come with it rather than deciding anything, so the player picks them later.
+ */
 export function addXp(m: RosterMember, amount: number, rng: RngHolder, notes: string[]): void {
-  if (m.level >= MAX_LEVEL) return;
-  m.xp += amount;
+  if (m.level >= MAX_LEVEL || amount <= 0) return;
+  m.pending ??= [];
+  m.xp += Math.max(1, Math.round(amount * xpMultiplier(m.attributes)));
   while (m.level < MAX_LEVEL && m.xp >= xpToNext(m.level)) {
     m.xp -= xpToNext(m.level);
     const before = effectiveStats(m).hp;
     m.level += 1;
     const gained: string[] = [`${m.name} reaches level ${m.level}.`];
-    if (TRAIT_LEVELS.includes(m.level)) {
-      const options = (Object.keys(TRAITS) as TraitId[]).filter((t) => !m.traits.includes(t));
-      if (options.length > 0) {
-        const t = pick(rng, options);
-        m.traits.push(t);
-        gained.push(`New trait: ${TRAITS[t].name}.`);
-      }
-    }
+    m.pending.push(...picksForLevel(m, m.level, rng));
     const mk = MAKEOVERS[m.id];
     if (mk && !m.makeover && !m.protagonist && m.level >= mk.level) {
       m.makeover = true;
       gained.push(mk.note);
     }
-    m.hp += Math.max(0, effectiveStats(m).hp - before); // levelling up heals what it adds
+    keepHealthy(m, before);
     notes.push(gained.join(' '));
   }
   if (m.level >= MAX_LEVEL) m.xp = 0;
@@ -489,7 +720,7 @@ export function addXp(m: RosterMember, amount: number, rng: RngHolder, notes: st
 
 /**
  * Fold a finished (or abandoned) battle back into the roster. Mutates the roster; `rng` supplies the
- * injury and trait rolls, so a seeded caller gets a reproducible outcome.
+ * injury and perk-offer rolls, so a seeded caller gets a reproducible outcome.
  *
  * - Everyone who deployed keeps the HP they ended with.
  * - A unit that went down meets its `fate`: by default it dies (permanently, even on a retreat: it
@@ -506,6 +737,7 @@ export function applyBattleResult(roster: Roster, state: GameState, rng: RngHold
   const notes: string[] = [];
   const fallen: string[] = [];
   const dropped: ItemId[] = [];
+  const levelled: string[] = [];
 
   for (const m of roster) {
     if (m.dead) continue;
@@ -526,9 +758,10 @@ export function applyBattleResult(roster: Roster, state: GameState, rng: RngHold
     m.gear = { ...(u.gear ?? gearOf(m)) }; // whatever they ended up wearing and carrying comes home with them
     if (completed) tickInjuries(m, notes); // before new injuries, so those keep their full duration
 
+    const luck = luckFactor(m.attributes);
     if (downed) {
       m.hp = u.alive ? Math.max(1, u.hp) : 1;
-      const id = giveInjury(m, rng, { permanentChance: PERMANENT_ON_FALL });
+      const id = giveInjury(m, rng, { permanentChance: PERMANENT_ON_FALL * luck });
       if (id) {
         notes.push(`${m.name} went down hard: ${INJURIES[id].name.toLowerCase()}.`);
         if (id === 'lost-hand') dropped.push(...dropIllegalGear(m));
@@ -536,7 +769,7 @@ export function applyBattleResult(roster: Roster, state: GameState, rng: RngHold
     } else {
       m.hp = Math.max(1, u.hp);
       // Ended the fight on their last legs: a chance of a knock that heals (never a scar; that takes a real fall).
-      if (u.alive && u.hp <= u.maxHp * BATTERED_BELOW && rand(rng) < BATTERED_CHANCE) {
+      if (u.alive && u.hp <= u.maxHp * BATTERED_BELOW && rand(rng) < BATTERED_CHANCE * luck) {
         const id = giveInjury(m, rng);
         if (id) notes.push(`${m.name} is battered: ${INJURIES[id].name.toLowerCase()}.`);
       }
@@ -544,12 +777,15 @@ export function applyBattleResult(roster: Roster, state: GameState, rng: RngHold
 
     if (completed) {
       const xp = XP_PARTICIPATION + XP_PER_HIT * (u.hits ?? 0) + XP_PER_KILL * (u.kills ?? 0) + (outcome === 'victory' ? XP_VICTORY : 0);
+      const was = m.level;
       addXp(m, xp, rng, notes);
+      if (m.level > was) levelled.push(m.id);
     }
+    if (opts.auto) notes.push(...autoSpend(m));
 
     m.hp = Math.min(m.hp, effectiveStats(m).hp);
   }
-  return { outcome, notes, fallen, dropped };
+  return { outcome, notes, fallen, dropped, levelled };
 }
 
 /** Rest at camp: everyone still alive back to full HP. Injuries are not touched; they heal by completing fights. */
@@ -564,3 +800,39 @@ export function restAtCamp(roster: Roster): number {
   }
   return healed;
 }
+
+// ---------- older saves ----------
+
+/**
+ * Bring a member written before attributes and perks existed up to date: rebuild their level-1 self
+ * and hand back every pick their level has earned, so nothing is quietly lost. Safe to run on a
+ * member that is already current, which is what makes it usable as a load-time repair pass.
+ */
+export function migrateMember(m: RosterMember, rng: RngHolder): boolean {
+  let changed = false;
+  if (!m.attributes) {
+    m.attributes = startingAttributes(m.clique, m.schoolClass);
+    changed = true;
+  }
+  if (!m.combat) {
+    m.combat = zeroCombat();
+    changed = true;
+  }
+  if (!m.perks) {
+    m.perks = startingPerks(m.clique, m.schoolClass);
+    changed = true;
+  }
+  if (!Array.isArray(m.traits) || m.traits.length === 0) {
+    m.traits = [startingTrait(m.name, m.clique, m.schoolClass)];
+    changed = true;
+  }
+  if (!m.pending) {
+    m.pending = [];
+    for (let lv = 2; lv <= Math.min(m.level, MAX_LEVEL); lv++) m.pending.push(...picksForLevel(m, lv, rng));
+    changed = true;
+  }
+  if (changed) m.hp = Math.max(1, Math.min(m.hp, effectiveStats(m).hp));
+  return changed;
+}
+
+export const migrateRoster = (roster: Roster, rng: RngHolder): boolean => roster.map((m) => migrateMember(m, rng)).some(Boolean);

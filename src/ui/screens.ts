@@ -1,7 +1,10 @@
 import {
   CLASSES,
+  ATTRS,
+  ATTR_IDS,
   CLIQUES,
   FIELD_SIZE,
+  PERKS,
   WEAPONS,
   chooseSquad,
   effectiveStats,
@@ -40,8 +43,17 @@ export const hideOverlayCard = hideOverlay;
 
 const statLine = (m: RosterMember): string => {
   const s = effectiveStats(m);
-  return `HP ${s.hp} &middot; Aim ${s.aim} &middot; Def ${s.defense} &middot; Move ${s.mobility} &middot; Crit ${s.crit}`;
+  return (
+    `HP ${s.hp} &middot; Move ${s.mobility} &middot; Crit ${s.crit}% &middot; Sight ${s.sight}<br>` +
+    `Ranged ${s.rangedAim} atk / ${s.rangedDefense} def &middot; Melee ${s.meleeAim} atk / ${s.meleeDefense} def`
+  );
 };
+
+/** The seven attributes on one line, for the creation preview. */
+const attrLine = (m: RosterMember): string => ATTR_IDS.map((id) => `${ATTRS[id].letter} ${m.attributes[id]}`).join(' &middot; ');
+
+/** What this clique and class already know how to do. */
+const perkLineFor = (m: RosterMember): string => m.perks.map((id) => PERKS[id]?.name ?? id).join(', ');
 
 const weaponLine = (m: RosterMember): string => {
   const w = WEAPONS[m.weapon];
@@ -91,7 +103,8 @@ export function showCreate(onDone: (choice: PlayerChoice) => void, initial: Part
     card.querySelectorAll<HTMLButtonElement>('#ov-classes .choice').forEach((b) => b.classList.toggle('selected', b.dataset.v === schoolClass));
     const m = newMember('pc', nameEl.value.trim() || 'You', clique, schoolClass, true, look);
     (card.querySelector('#ov-preview') as HTMLDivElement).innerHTML =
-      `<b>${esc(m.name)}</b> &mdash; ${CLIQUES[clique].label} / ${CLASSES[schoolClass].label}<br>${statLine(m)}<br>${weaponLine(m)}`;
+      `<b>${esc(m.name)}</b> &mdash; ${CLIQUES[clique].label} / ${CLASSES[schoolClass].label}<br>${attrLine(m)}<br>${statLine(m)}<br>${weaponLine(m)}<br>` +
+      `<span style="opacity:.8">Starts knowing: ${esc(perkLineFor(m))}</span>`;
   };
   card.querySelector('#ov-looks')!.addEventListener('click', (e) => {
     const v = (e.target as HTMLElement).closest<HTMLButtonElement>('.choice')?.dataset.v as Look | undefined;

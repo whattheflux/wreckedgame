@@ -296,6 +296,8 @@ export interface WorldState {
   mercy?: Mercy;
   /** camp days passed (starts at 1). Absent on older saves. */
   day?: number;
+  /** regions and sites already found, so a discovery only pays once. Absent on older saves. */
+  seen?: Record<string, boolean>;
 }
 
 export function createWorld(seed: number, player?: PlayerChoice): WorldState {

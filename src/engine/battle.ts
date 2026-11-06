@@ -1,9 +1,10 @@
 import type { BattleEvent, GameMap, GameState, Pos, Team, Unit, Weapon } from './types';
 import { dist, pathTo, posKey, reachableTiles, type PathNode } from './grid';
-import { computeShot, resolveShot } from './combat';
-import { podsToWake, updateExplored } from './vision';
+import { DUELIST_AIM, computeShot, resolveShot } from './combat';
+import { SIGHT_RANGE, podsToWake, updateExplored } from './vision';
 import { coverValueVs, nearestUnit } from './tactics';
 import { canUseSkills, hasStatus, isHiddenFrom, tickStatuses } from './status';
+import { hasFlag } from './perks';
 import { gearForWeapon, type Gear } from './items';
 
 export interface UnitSpec {
@@ -17,8 +18,20 @@ export interface UnitSpec {
   /** defaults to `hp`; set it lower-than-max `hp` to deploy a wounded unit */
   maxHp?: number;
   mobility: number;
+  /** hit chance with anything thrown or fired */
   aim: number;
+  /** hit chance in reach; defaults to `aim` */
+  meleeAim?: number;
+  /** how hard to hit at a distance */
   defense: number;
+  /** how hard to hit in reach; defaults to `defense` */
+  meleeDefense?: number;
+  /** how far they see; defaults to SIGHT_RANGE */
+  sight?: number;
+  /** rule flags from perks (see PerkFlag) */
+  flags?: string[];
+  /** the Charm attribute, read by the Charm skill */
+  charm?: number;
   crit: number;
   weapon: Weapon;
   /** enemies sharing a pod id start dormant together and wake together */
@@ -63,7 +76,10 @@ function spawn(s: UnitSpec): Unit {
     maxAp: MAX_AP,
     mobility: s.mobility,
     aim: s.aim,
+    meleeAim: s.meleeAim ?? s.aim,
     defense: s.defense,
+    meleeDefense: s.meleeDefense ?? s.defense,
+    sight: s.sight ?? SIGHT_RANGE,
     critChance: s.crit,
     weapon: s.weapon,
     ammo: s.weapon.clip,
@@ -75,6 +91,8 @@ function spawn(s: UnitSpec): Unit {
     idleTurns: 0,
     gear: s.gear ? { ...s.gear } : gearForWeapon(s.weapon),
     ...(s.skills?.length ? { skills: [...s.skills] } : {}),
+    ...(s.flags?.length ? { flags: [...s.flags] } : {}),
+    ...(s.charm !== undefined ? { charm: s.charm } : {}),
     ...(s.protagonist ? { protagonist: true } : {}),
     ...(s.sprite ? { sprite: s.sprite } : {}),
   };
@@ -196,19 +214,21 @@ interface WalkResult {
 function opportunityAttacks(state: GameState, mover: Unit, next: Pos): BattleEvent[] {
   const events: BattleEvent[] = [];
   const from = mover.pos;
+  if (hasFlag(mover, 'nimble')) return events; // Nimble Feet: nobody gets a free swing at you
   for (const foe of state.units) {
     if (!foe.alive || foe.team === mover.team || foe.dormant || !foe.weapon.melee || hasStatus(foe, 'stun')) continue;
     const reach = foe.weapon.range;
     if (dist(foe.pos, from) > reach || dist(foe.pos, next) <= reach) continue;
     const pv = computeShot(state.map, foe, foe.pos, mover);
     if (!pv.canShoot) continue;
+    if (hasFlag(foe, 'duelist')) pv.hitChance = Math.min(95, pv.hitChance + DUELIST_AIM);
     events.push(resolveShot(state, foe, mover, pv, false, true));
     if (!mover.alive) break;
   }
   return events;
 }
 
-function walk(state: GameState, unit: Unit, path: Pos[], detect: boolean): WalkResult {
+export function walkPath(state: GameState, unit: Unit, path: Pos[], detect: boolean): WalkResult {
   const traveled: Pos[] = [];
   const reactions: BattleEvent[] = [];
   let woke: string[] = [];
@@ -250,7 +270,7 @@ function scamper(state: GameState, members: Unit[]): BattleEvent[] {
     if (path.length === 0) continue;
     const from = { ...m.pos };
     state.log.push({ team: 'enemy', text: `${m.name} scrambles for cover.`, at: [from, path[path.length - 1]] });
-    const w = walk(state, m, path, false);
+    const w = walkPath(state, m, path, false);
     events.push({ type: 'move', unitId: m.id, from, path: w.traveled }, ...w.reactions);
   }
   return events;
@@ -286,7 +306,7 @@ export function moveUnit(state: GameState, id: string, dest: Pos): ActionResult 
   const path = pathTo(reach, key);
   state.log.push({ team: unit.team, text: `${unit.name} ${plannedCost > 1 ? 'dashes' : 'moves'}.`, at: [from, { ...dest }] });
 
-  const w = walk(state, unit, path, unit.team === 'player');
+  const w = walkPath(state, unit, path, unit.team === 'player');
   // Pay only for the distance actually covered (an interrupted dash may cost less than planned).
   unit.ap -= Math.min(unit.ap, Math.max(1, moveApCost(w.traveled.length, unit.mobility)));
 
@@ -311,7 +331,8 @@ export function shoot(state: GameState, id: string, targetId: string): ActionRes
 
   const wasDormant = target.dormant;
   attacker.ap -= 1;
-  if (attacker.weapon.heavy) attacker.ap = 0; // a heavy weapon takes the whole turn: no moving or second attack after it
+  // a heavy weapon takes the whole turn: no moving or second attack after it, unless you are built for it
+  if (attacker.weapon.heavy && !hasFlag(attacker, 'runAndGun')) attacker.ap = 0;
   if (!attacker.weapon.melee) attacker.ammo -= 1;
   attacker.attacked = true;
   attacker.idleTurns = 0;
@@ -337,11 +358,11 @@ export function setOverwatch(state: GameState, id: string): ActionResult {
 }
 
 export function reload(state: GameState, id: string): ActionResult {
-  const v = validateActor(state, id);
+  const v = validateActor(state, id, hasFlag(getUnit(state, id), 'quickDraw') ? 0 : 1);
   if ('error' in v) return fail(v.error);
   const unit = v.unit;
   if (unit.ammo >= unit.weapon.clip) return fail('Already full');
-  unit.ap -= 1;
+  if (!hasFlag(unit, 'quickDraw')) unit.ap -= 1;
   unit.ammo = unit.weapon.clip;
   state.log.push({ team: unit.team, text: `${unit.name} reloads ${unit.weapon.name}.`, at: [{ ...unit.pos }] });
   return { ok: true, events: [{ type: 'reload', unitId: unit.id }] };

@@ -2,13 +2,13 @@ import type { Unit, Weapon } from './types';
 
 /** How a skill is aimed. */
 export type SkillTarget =
-  /** happens at once, no target */
+  /** happens at once, with no target to pick (a stance, a shout, something you do to yourself) */
   | 'self'
   /** click an enemy in range and sight */
   | 'enemy'
   /** acts on an adjacent ally (or yourself) who needs it */
   | 'ally'
-  /** no targeting: it is a stance of the base game (overwatch, reload, revive) */
+  /** no targeting: one of the things everybody can do (overwatch, reload, revive) */
   | 'base';
 
 /** Something a unit can do from the action bar besides moving and its basic attack. */
@@ -23,10 +23,16 @@ export interface Skill {
   target: SkillTarget;
   /** AP spent (the base skills do their own accounting) */
   ap?: number;
+  /** using it spends the rest of the turn, like a heavy weapon */
+  endsTurn?: boolean;
   /** uses per battle; absent = unlimited */
   perBattle?: number;
   /** a thrown skill resolves like a shot with this weapon (range, falloff and cover all apply) */
   throws?: Weapon;
+  /** consumes this item from the belt or pack */
+  needsItem?: string;
+  /** how far it reaches when it is not a throw (tiles); absent = adjacent */
+  range?: number;
 }
 
 /** What everyone can do. */
@@ -57,7 +63,9 @@ export const BASE_SKILLS: Skill[] = [
   },
 ];
 
-/** Things thrown rather than fired: no clip, they never break, and they are lighter than a real weapon. */
+// ---------- things that get thrown ----------
+
+/** Thrown, not fired: no clip to run dry, and they never break the weapon in your hands. */
 export const BALL: Weapon = { name: 'Thrown Ball', damage: [2, 4], range: 7, optimal: 4, aimMod: 0, critMod: 5, clip: 99, hands: 1, heavy: false };
 export const BEAKER: Weapon = {
   name: 'Acid Beaker',
@@ -71,8 +79,25 @@ export const BEAKER: Weapon = {
   heavy: false,
   inflicts: [{ effect: 'burn', chance: 0.8 }],
 };
+export const PAINT: Weapon = {
+  name: 'Paint Bomb',
+  damage: [1, 2],
+  range: 6,
+  optimal: 5,
+  aimMod: 10,
+  critMod: 0,
+  clip: 99,
+  hands: 1,
+  heavy: false,
+  inflicts: [{ effect: 'blind', chance: 0.7 }],
+};
 
-/** The class and clique skills. Add new ones here and in CLIQUE_SKILLS / CLASS_SKILLS. */
+// ---------- the skills perks grant ----------
+
+/**
+ * Everything a perk can give you. Keyed by id; `perks.ts` decides who can learn what and when.
+ * Hotkeys are unique across this table and never clash with the fixed battle keys.
+ */
 export const EXTRA_SKILLS: Record<string, Skill> = {
   throwBall: {
     id: 'throwBall',
@@ -95,6 +120,17 @@ export const EXTRA_SKILLS: Record<string, Skill> = {
     perBattle: 2,
     throws: BEAKER,
   },
+  paintBomb: {
+    id: 'paintBomb',
+    name: 'Paint Bomb',
+    key: 'b',
+    cost: '1 AP, 2 per battle',
+    desc: 'A jar of poster paint in the face. Range 6, little damage, but they usually cannot see a thing afterwards.',
+    target: 'enemy',
+    ap: 1,
+    perBattle: 2,
+    throws: PAINT,
+  },
   charm: {
     id: 'charm',
     name: 'Charm',
@@ -104,6 +140,28 @@ export const EXTRA_SKILLS: Record<string, Skill> = {
     target: 'enemy',
     ap: 1,
     perBattle: 1,
+    range: 7,
+  },
+  analyse: {
+    id: 'analyse',
+    name: 'Analyse',
+    key: 'q',
+    cost: '1 AP, 2 per battle',
+    desc: 'Read how someone fights and call it out. Range 9: they are marked for two turns and everyone finds them easier to hit.',
+    target: 'enemy',
+    ap: 1,
+    perBattle: 2,
+    range: 9,
+  },
+  tackle: {
+    id: 'tackle',
+    name: 'Tackle',
+    key: 'c',
+    cost: '1 AP (ends turn)',
+    desc: 'Charge someone you can reach, shoulder first. You end up next to them, they take a hit and are often stunned.',
+    target: 'enemy',
+    ap: 1,
+    endsTurn: true,
   },
   incognito: {
     id: 'incognito',
@@ -115,6 +173,58 @@ export const EXTRA_SKILLS: Record<string, Skill> = {
     ap: 1,
     perBattle: 1,
   },
+  brace: {
+    id: 'brace',
+    name: 'Brace',
+    key: 'd',
+    cost: '1 AP (ends turn)',
+    desc: 'Plant your feet and watch the ground around you: much harder to hit until your next turn.',
+    target: 'self',
+    ap: 1,
+    endsTurn: true,
+  },
+  warCry: {
+    id: 'warCry',
+    name: 'War Cry',
+    key: 's',
+    cost: '1 AP, once per battle',
+    desc: 'Roar at everyone nearby. Rivals within 5 tiles are shaken: their aim and nerve go.',
+    target: 'self',
+    ap: 1,
+    perBattle: 1,
+    range: 5,
+  },
+  unsettle: {
+    id: 'unsettle',
+    name: 'Unsettle',
+    key: 'u',
+    cost: '1 AP, once per battle',
+    desc: 'Do whatever it is you do. Rivals within 4 tiles are scared and shoot badly for a while.',
+    target: 'self',
+    ap: 1,
+    perBattle: 1,
+    range: 4,
+  },
+  mellow: {
+    id: 'mellow',
+    name: 'Mellow Out',
+    key: 'j',
+    cost: '1 AP, once per battle',
+    desc: 'Breathe. Everything on you (burning, bleeding, scared, the lot) comes off, and you get 3 HP back.',
+    target: 'self',
+    ap: 1,
+    perBattle: 1,
+  },
+  rally: {
+    id: 'rally',
+    name: 'Rally',
+    key: 'y',
+    cost: '1 AP, once per battle',
+    desc: 'Get an adjacent friend moving again: they gain an action point and shake off being shaken or scared.',
+    target: 'ally',
+    ap: 1,
+    perBattle: 1,
+  },
   patchUp: {
     id: 'patchUp',
     name: 'Patch Up',
@@ -123,25 +233,19 @@ export const EXTRA_SKILLS: Record<string, Skill> = {
     desc: 'Use a bandage from your belt or pack on someone next to you (or yourself): restores 4 HP and stops bleeding.',
     target: 'ally',
     ap: 1,
+    needsItem: 'bandage',
+  },
+  rations: {
+    id: 'rations',
+    name: 'Rations',
+    key: 'g',
+    cost: '1 AP, uses an energy bar',
+    desc: 'Push an energy bar into someone next to you (or yourself): 3 HP back, and it settles their nerves.',
+    target: 'ally',
+    ap: 1,
+    needsItem: 'energybar',
   },
 };
-
-/** What each clique and class adds. Keys are the clique / class ids from roster.ts (kept as strings so this file stays import-free). */
-export const CLIQUE_SKILLS: Record<string, string[]> = {
-  popular: ['charm'],
-  nerd: ['acidBeaker'],
-  drama: ['incognito'],
-};
-export const CLASS_SKILLS: Record<string, string[]> = {
-  sport: ['throwBall'],
-  drama: ['incognito'],
-  homeec: ['patchUp'],
-};
-
-/** The extra skill ids for a clique + class pair, without duplicates, clique first. */
-export function skillIdsFor(clique: string, schoolClass: string): string[] {
-  return [...new Set([...(CLIQUE_SKILLS[clique] ?? []), ...(CLASS_SKILLS[schoolClass] ?? [])])];
-}
 
 export const skillById = (id: string): Skill | undefined => BASE_SKILLS.find((s) => s.id === id) ?? EXTRA_SKILLS[id];
 

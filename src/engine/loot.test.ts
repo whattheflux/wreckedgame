@@ -122,9 +122,9 @@ describe('gear and the roster', () => {
   it('worn armour raises stats; deploying and coming home carries gear both ways', () => {
     const roster = createStarterRoster();
     const amy = roster.find((m) => m.id === 'p1')!;
-    const before = effectiveStats(amy).defense;
+    const before = effectiveStats(amy).rangedDefense;
     amy.gear = { ...gearOf(amy), head: 'helmet' };
-    expect(effectiveStats(amy).defense).toBe(before + 3);
+    expect(effectiveStats(amy).rangedDefense).toBe(before + 3);
     const sc = deployRoster(beachLanding, roster);
     const spec = sc.units.find((u) => u.id === 'p1')!;
     expect(spec.gear?.head).toBe('helmet');

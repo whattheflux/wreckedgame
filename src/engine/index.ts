@@ -1,4 +1,6 @@
 export * from './types';
+export * from './attributes';
+export * from './perks';
 export * from './grid';
 export * from './combat';
 export * from './tactics';

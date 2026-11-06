@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   BALL,
   BEAKER,
-  CLASS_SKILLS,
-  CLIQUE_SKILLS,
+  CLASS_POOL,
+  CLASS_STARTER,
+  CLIQUE_POOL,
+  CLIQUE_STARTER,
+  PERKS,
+  grantedSkills,
+  startingPerks,
   EXTRA_SKILLS,
   MAKEOVERS,
   addStatus,
@@ -22,12 +27,15 @@ import {
   setOverwatch,
   shoot,
   skillBlock,
-  skillIdsFor,
   skillsOf,
   spriteKey,
   tickStatuses,
   useSkill,
   usesLeft,
+  thrownWeapon,
+  PATCH_HEAL,
+  FIELD_MEDIC_BONUS,
+  computeShot,
   xpToNext,
 } from './index';
 import { arena, open, unit } from './testutil';
@@ -36,12 +44,13 @@ const hero = (over: Parameters<typeof unit>[0] extends infer T ? Partial<T> : ne
   unit({ id: 'a', team: 'player', pos: { x: 1, y: 1 }, skills: ['throwBall', 'acidBeaker', 'charm', 'incognito', 'patchUp'], gear: { belt1: 'bandage' }, ...over });
 
 describe('which skills a kid gets', () => {
-  it('maps cliques and classes to skills without duplicates', () => {
-    expect(skillIdsFor('popular', 'sport')).toEqual(['charm', 'throwBall']);
-    expect(skillIdsFor('nerd', 'science')).toEqual(['acidBeaker']);
-    expect(skillIdsFor('drama', 'drama')).toEqual(['incognito']);
-    expect(skillIdsFor('stoner', 'woodwork')).toEqual([]);
-    for (const id of [...Object.values(CLIQUE_SKILLS).flat(), ...Object.values(CLASS_SKILLS).flat()]) expect(EXTRA_SKILLS[id]).toBeTruthy();
+  it('gives every clique and class a signature perk, and never the same skill twice', () => {
+    expect(grantedSkills(startingPerks('popular', 'sport'))).toEqual(['charm', 'throwBall']);
+    expect(grantedSkills(startingPerks('nerd', 'science'))).toEqual(['acidBeaker']); // both sides grant the lab kit: still one skill
+    expect(startingPerks('nerd', 'science')).toEqual(['labKit']);
+    expect(grantedSkills(startingPerks('drama', 'drama'))).toEqual(['incognito']);
+    for (const id of [...Object.values(CLIQUE_STARTER), ...Object.values(CLASS_STARTER)]) expect(PERKS[id]).toBeTruthy();
+    for (const id of [...Object.values(CLIQUE_POOL).flat(), ...Object.values(CLASS_POOL).flat()]) expect(PERKS[id], id).toBeTruthy();
   });
 
   it('every skill has its own hotkey, none clashing with the base keys', () => {
@@ -64,10 +73,13 @@ describe('which skills a kid gets', () => {
     expect(skillsOf(undefined).map((s) => s.id)).toEqual(['overwatch', 'reload', 'revive']);
   });
 
-  it('deployed units carry their skills into the battle', () => {
+  it('deployed units carry their skills and perk flags into the battle', () => {
     const roster = createStarterRoster();
     const sc = deployRoster({ name: 't', seed: 1, map: () => arena(open(8, 8), []).map, units: roster.slice(0, 4).map((m, i) => ({ ...memberSpec(m, i, 0) })) }, roster);
     expect(sc.units.some((u) => u.skills?.includes('charm'))).toBe(true);
+    roster[0].perks.push('deadeye');
+    const sc2 = deployRoster({ name: 't', seed: 1, map: () => arena(open(8, 8), []).map, units: roster.slice(0, 4).map((m, i) => ({ ...memberSpec(m, i, 0) })) }, roster);
+    expect(sc2.units.find((u) => u.id === 'pc')?.flags).toContain('deadeye');
   });
 });
 
@@ -147,8 +159,11 @@ describe('thrown skills', () => {
 describe('Charm', () => {
   it('chance falls as the target gets tougher and stays in bounds', () => {
     expect(charmChance({ maxHp: 8 })).toBeGreaterThan(charmChance({ maxHp: 14 }));
-    expect(charmChance({ maxHp: 1 })).toBe(85);
-    expect(charmChance({ maxHp: 100 })).toBe(15);
+    expect(charmChance({ maxHp: 1 })).toBe(86);
+    expect(charmChance({ maxHp: 100 })).toBe(5);
+    // Charm the attribute, and the Showstopper perk, both push it up
+    expect(charmChance({ maxHp: 14 }, 5)).toBe(charmChance({ maxHp: 14 }) + 20);
+    expect(charmChance({ maxHp: 14 }, 0, true)).toBe(charmChance({ maxHp: 14 }) + 20);
   });
 
   it('a charmed rival loses its turns, and a hit snaps it out of it', () => {
@@ -172,7 +187,7 @@ describe('Charm', () => {
     addStatus(e2, 'charmed');
     const att = hero({ id: 'b', pos: { x: 1, y: 2 } });
     const s2 = arena(open(10, 4), [att, e2]);
-    resolveShot(s2, att, e2, { canShoot: true, hitChance: 100, critChance: 0, cover: 'none', flanked: false, exposed: true, dmgMin: 1, dmgMax: 1, distance: 3, range: 12, optimal: 12, melee: false, rangePenalty: 0, coverPenalty: 0 }, false);
+    resolveShot(s2, att, e2, { canShoot: true, hitChance: 100, critChance: 0, cover: 'none', coverIgnored: false, flanked: false, exposed: true, dmgMin: 1, dmgMax: 1, distance: 3, range: 12, optimal: 12, melee: false, rangePenalty: 0, coverPenalty: 0 }, false);
     expect(hasStatus(e2, 'charmed')).toBe(false);
   });
 
@@ -359,5 +374,258 @@ describe("Anna's makeover", () => {
     const pc = newMember('p4', 'Anna', 'drama', 'drama', true);
     addXp(pc, 10000, { rngState: 5 }, []);
     expect(pc.makeover).toBeUndefined();
+  });
+});
+
+// ---------- the skills the later perks teach ----------
+
+const kid = (over: Record<string, unknown> = {}) =>
+  unit({
+    id: 'a',
+    team: 'player',
+    pos: { x: 1, y: 1 },
+    skills: ['tackle', 'analyse', 'rally', 'brace', 'warCry', 'unsettle', 'mellow', 'rations', 'paintBomb', 'patchUp', 'throwBall', 'acidBeaker', 'incognito', 'charm'],
+    gear: { belt1: 'bandage', belt2: 'energybar' },
+    ...over,
+  });
+
+describe('Tackle', () => {
+  it('charges across the gap, lands next to them and hits, ending the turn', () => {
+    const a = kid({ aim: 300, meleeAim: 300, mobility: 5 });
+    const e = unit({ id: 'e', team: 'enemy', pos: { x: 5, y: 1 }, hp: 60, maxHp: 60 });
+    const s = arena(open(12, 4), [a, e]);
+    const r = useSkill(s, 'a', 'tackle', 'e');
+    expect(r.ok).toBe(true);
+    expect(Math.max(Math.abs(a.pos.x - e.pos.x), Math.abs(a.pos.y - e.pos.y))).toBe(1);
+    expect(a.ap).toBe(0); // ends the turn
+    expect(e.hp).toBeLessThan(60);
+    expect(r.events.some((ev) => ev.type === 'move')).toBe(true);
+    expect(s.log.some((l) => l.text.includes('Tackle'))).toBe(true);
+  });
+
+  it('works from right beside them without moving', () => {
+    const a = kid({ aim: 300, meleeAim: 300 });
+    const e = unit({ id: 'e', team: 'enemy', pos: { x: 2, y: 1 }, hp: 60, maxHp: 60 });
+    const s = arena(open(8, 4), [a, e]);
+    expect(useSkill(s, 'a', 'tackle', 'e').ok).toBe(true);
+    expect(a.pos).toEqual({ x: 1, y: 1 });
+    expect(e.hp).toBeLessThan(60);
+  });
+
+  it('is refused when they are too far to reach, and costs nothing', () => {
+    const a = kid({ mobility: 3 });
+    const e = unit({ id: 'e', team: 'enemy', pos: { x: 11, y: 3 } });
+    const s = arena(open(14, 5), [a, e]);
+    expect(useSkill(s, 'a', 'tackle', 'e')).toMatchObject({ ok: false });
+    expect(a.ap).toBe(2);
+  });
+
+  it('often leaves them stunned', () => {
+    let stunned = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const a = kid({ aim: 300, meleeAim: 300 });
+      const e = unit({ id: 'e', team: 'enemy', pos: { x: 3, y: 1 }, hp: 60, maxHp: 60 });
+      const s = arena(open(10, 4), [a, e], seed);
+      useSkill(s, 'a', 'tackle', 'e');
+      if (hasStatus(e, 'stun')) stunned++;
+    }
+    expect(stunned).toBeGreaterThan(8);
+    expect(stunned).toBeLessThan(40);
+  });
+});
+
+describe('Analyse', () => {
+  it('marks them so everyone finds them easier to hit', () => {
+    const a = kid();
+    const e = unit({ id: 'e', team: 'enemy', pos: { x: 6, y: 1 }, defense: 20, meleeDefense: 20 });
+    const s = arena(open(12, 4), [a, e]);
+    const before = computeShot(s.map, a, a.pos, e).hitChance;
+    expect(useSkill(s, 'a', 'analyse', 'e').ok).toBe(true);
+    expect(hasStatus(e, 'marked')).toBe(true);
+    expect(computeShot(s.map, a, a.pos, e).hitChance).toBeGreaterThan(before);
+  });
+
+  it('has a long reach but still needs to see them', () => {
+    const a = kid();
+    const far = unit({ id: 'f', team: 'enemy', pos: { x: 14, y: 1 } });
+    expect(useSkill(arena(open(18, 4), [kid(), far]), 'a', 'analyse', 'f')).toMatchObject({ ok: false, error: 'Out of range' });
+    const walled = arena(['.#....', '.#....', '.#....'], [kid({ pos: { x: 0, y: 1 } }), unit({ id: 'w', team: 'enemy', pos: { x: 3, y: 1 } })]);
+    expect(useSkill(walled, 'a', 'analyse', 'w').ok).toBe(false);
+    expect(a.ap).toBe(2);
+  });
+});
+
+describe('Rally', () => {
+  it('gives an adjacent friend an action point back and settles their nerves', () => {
+    const a = kid();
+    const friend = unit({ id: 'f', team: 'player', pos: { x: 2, y: 1 }, ap: 0 });
+    addStatus(friend, 'shaken');
+    const s = arena(open(8, 4), [a, friend]);
+    expect(useSkill(s, 'a', 'rally', 'f').ok).toBe(true);
+    expect(friend.ap).toBe(1);
+    expect(hasStatus(friend, 'shaken')).toBe(false);
+    expect(a.ap).toBe(1);
+  });
+
+  it('never gives more than a full turn, is not for yourself, and only once a battle', () => {
+    const a = kid();
+    const full = unit({ id: 'f', team: 'player', pos: { x: 2, y: 1 }, ap: 2 });
+    expect(useSkill(arena(open(8, 4), [kid(), full]), 'a', 'rally', 'f')).toMatchObject({ ok: false });
+    const tired = unit({ id: 'g', team: 'player', pos: { x: 2, y: 1 }, ap: 0 });
+    const s = arena(open(8, 4), [a, tired]);
+    expect(useSkill(s, 'a', 'rally').ok).toBe(true);
+    tired.ap = 0;
+    a.ap = 2;
+    expect(useSkill(s, 'a', 'rally')).toMatchObject({ ok: false, error: 'Already used this battle.' });
+  });
+});
+
+describe('Brace', () => {
+  it('makes you much harder to hit until your next turn, and ends the turn', () => {
+    const a = kid();
+    const e = unit({ id: 'e', team: 'enemy', pos: { x: 5, y: 1 }, aim: 80 });
+    const s = arena(open(10, 4), [a, e]);
+    const before = computeShot(s.map, e, e.pos, a).hitChance;
+    expect(useSkill(s, 'a', 'brace').ok).toBe(true);
+    expect(a.ap).toBe(0);
+    expect(hasStatus(a, 'braced')).toBe(true);
+    expect(computeShot(s.map, e, e.pos, a).hitChance).toBeLessThan(before);
+    expect(useSkill(s, 'a', 'brace')).toMatchObject({ ok: false });
+  });
+
+  it('wears off at the start of your next turn', () => {
+    const a = kid();
+    const s = arena(open(8, 4), [a]);
+    useSkill(s, 'a', 'brace');
+    tickStatuses(s, 'player');
+    expect(hasStatus(a, 'braced')).toBe(false);
+  });
+});
+
+describe('the two shouts', () => {
+  it('War Cry shakes every rival nearby and leaves the far ones alone', () => {
+    const a = kid();
+    const near = unit({ id: 'n', team: 'enemy', pos: { x: 4, y: 1 } });
+    const far = unit({ id: 'f', team: 'enemy', pos: { x: 14, y: 1 } });
+    const friend = unit({ id: 'p', team: 'player', pos: { x: 2, y: 1 } });
+    const s = arena(open(18, 4), [a, near, far, friend]);
+    expect(useSkill(s, 'a', 'warCry').ok).toBe(true);
+    expect(hasStatus(near, 'shaken')).toBe(true);
+    expect(hasStatus(far, 'shaken')).toBe(false);
+    expect(hasStatus(friend, 'shaken')).toBe(false); // your own side is fine
+  });
+
+  it('Unsettle scares them instead, and neither wakes a sleeping pod by itself', () => {
+    const a = kid();
+    const sleeper = unit({ id: 'e', team: 'enemy', pos: { x: 3, y: 1 }, pod: 'p', dormant: true });
+    const s = arena(open(10, 4), [a, sleeper]);
+    expect(useSkill(s, 'a', 'unsettle').ok).toBe(true);
+    expect(hasStatus(sleeper, 'scared')).toBe(false); // dormant rivals are not even noticed
+    expect(sleeper.dormant).toBe(true);
+  });
+
+  it('reports honestly when there is nobody to shout at', () => {
+    const a = kid();
+    const s = arena(open(10, 4), [a, unit({ id: 'e', team: 'enemy', pos: { x: 9, y: 3 } })]);
+    const r = useSkill(s, 'a', 'warCry');
+    expect(r.ok).toBe(true);
+    expect(r.events.find((e) => e.type === 'skill')).toMatchObject({ ok: false });
+    expect(s.log.at(-1)?.text).toContain('nobody flinches');
+  });
+});
+
+describe('Mellow Out', () => {
+  it('clears everything bad and gives some health back, keeping the good', () => {
+    const a = kid({ hp: 4, maxHp: 20 });
+    addStatus(a, 'burn');
+    addStatus(a, 'scared');
+    addStatus(a, 'hidden');
+    const s = arena(open(8, 4), [a]);
+    expect(useSkill(s, 'a', 'mellow').ok).toBe(true);
+    expect(hasStatus(a, 'burn')).toBe(false);
+    expect(hasStatus(a, 'scared')).toBe(false);
+    expect(hasStatus(a, 'hidden')).toBe(true);
+    expect(a.hp).toBe(7);
+  });
+});
+
+describe('Rations', () => {
+  it('spends an energy bar to feed someone next to you', () => {
+    const a = kid();
+    const friend = unit({ id: 'f', team: 'player', pos: { x: 2, y: 1 }, hp: 2, maxHp: 10 });
+    addStatus(friend, 'scared');
+    const s = arena(open(8, 4), [a, friend]);
+    expect(useSkill(s, 'a', 'rations', 'f').ok).toBe(true);
+    expect(friend.hp).toBe(5);
+    expect(hasStatus(friend, 'scared')).toBe(false);
+    expect(a.gear).toEqual({ belt1: 'bandage' });
+  });
+
+  it('is refused with nothing to hand out', () => {
+    const a = kid({ gear: { belt1: 'bandage' } });
+    const friend = unit({ id: 'f', team: 'player', pos: { x: 2, y: 1 }, hp: 2, maxHp: 10 });
+    expect(useSkill(arena(open(8, 4), [a, friend]), 'a', 'rations', 'f')).toMatchObject({ ok: false });
+    expect(a.gear?.belt1).toBe('bandage');
+  });
+});
+
+describe('Paint Bomb', () => {
+  it('does little damage but usually blinds', () => {
+    let blinded = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const a = kid({ aim: 300 });
+      const e = unit({ id: 'e', team: 'enemy', pos: { x: 4, y: 1 }, hp: 60, maxHp: 60 });
+      const s = arena(open(10, 4), [a, e], seed);
+      useSkill(s, 'a', 'paintBomb', 'e');
+      if (hasStatus(e, 'blind')) blinded++;
+      expect(60 - e.hp).toBeLessThanOrEqual(3);
+    }
+    expect(blinded).toBeGreaterThan(18);
+  });
+});
+
+describe('perks bend the skills they belong to', () => {
+  const withFlags = (flags: string[], over: Record<string, unknown> = {}) => kid({ flags, ...over });
+
+  it('Cannon Arm throws further and harder', () => {
+    const plain = kid({ aim: 300 });
+    const strong = withFlags(['cannonArm'], { aim: 300 });
+    const e = () => unit({ id: 'e', team: 'enemy', pos: { x: 9, y: 1 }, hp: 90, maxHp: 90 });
+    expect(useSkill(arena(open(14, 4), [plain, e()]), 'a', 'throwBall', 'e')).toMatchObject({ ok: false, error: 'Out of range' });
+    const s = arena(open(14, 4), [strong, e()]);
+    expect(useSkill(s, 'a', 'throwBall', 'e').ok).toBe(true);
+    expect(thrownWeapon(strong, EXTRA_SKILLS.throwBall)?.damage[1]).toBe(EXTRA_SKILLS.throwBall.throws!.damage[1] + 1);
+  });
+
+  it('Chemist packs a spare beaker and a stronger mix', () => {
+    const plain = kid();
+    const chem = withFlags(['chemist']);
+    expect(usesLeft(chem, EXTRA_SKILLS.acidBeaker)).toBe(usesLeft(plain, EXTRA_SKILLS.acidBeaker) + 1);
+    const w = thrownWeapon(chem, EXTRA_SKILLS.acidBeaker)!;
+    expect(w.damage[1]).toBeGreaterThan(EXTRA_SKILLS.acidBeaker.throws!.damage[1]);
+    expect(w.inflicts?.[0].chance).toBeGreaterThan(EXTRA_SKILLS.acidBeaker.throws!.inflicts![0].chance);
+  });
+
+  it('Showstopper makes a charm far likelier; Charm the attribute does too', () => {
+    expect(charmChance({ maxHp: 12 }, 0, true)).toBeGreaterThan(charmChance({ maxHp: 12 }));
+    expect(charmChance({ maxHp: 12 }, 6)).toBeGreaterThan(charmChance({ maxHp: 12 }));
+  });
+
+  it('Understudy keeps you hidden a turn longer', () => {
+    const plain = kid();
+    const sneak = withFlags(['understudy']);
+    useSkill(arena(open(8, 4), [plain]), 'a', 'incognito');
+    useSkill(arena(open(8, 4), [sneak]), 'a', 'incognito');
+    const turns = (u: typeof plain): number => u.status?.find((x) => x.id === 'hidden')?.turns ?? 0;
+    expect(turns(sneak)).toBe(turns(plain) + 1);
+  });
+
+  it('Field Medic patches up better and for free', () => {
+    const medic = withFlags(['fieldMedic']);
+    const friend = unit({ id: 'f', team: 'player', pos: { x: 2, y: 1 }, hp: 1, maxHp: 30 });
+    const s = arena(open(8, 4), [medic, friend]);
+    expect(useSkill(s, 'a', 'patchUp', 'f').ok).toBe(true);
+    expect(friend.hp).toBe(1 + PATCH_HEAL + FIELD_MEDIC_BONUS);
+    expect(medic.ap).toBe(2); // free
   });
 });

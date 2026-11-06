@@ -1,3 +1,4 @@
+import { MOD_LABEL } from '../engine/attributes';
 import { GEAR_SLOTS, ITEMS, SLOT_LABEL, STATUSES, weaponOfItem, isPackSlot, packCapacity, slotsOf, type Gear, type GearLoc, type ItemDef, type ItemId } from '../engine';
 import type { Disposition, Prisoner, Spoils, SpoilsChoice } from '../world/spoils';
 import { previewUrl } from '../render/sprites';
@@ -63,7 +64,7 @@ export function itemSvg(d: ItemDef): string {
   return `<svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true"><g fill="${d.color}" stroke="rgba(0,0,0,.55)" stroke-width="2" stroke-linejoin="round">${GLYPHS[key]}</g></svg>`;
 }
 
-const MOD_LABEL: Record<string, string> = { hp: 'HP', mobility: 'Move', aim: 'Aim', defense: 'Def', crit: 'Crit' };
+
 
 /** Hover text for an item: name, what it does, what it changes while worn. */
 export function itemTip(id: ItemId): string {

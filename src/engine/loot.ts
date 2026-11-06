@@ -1,6 +1,8 @@
 import { rand } from './rng';
+import { SIGHT_RANGE } from './vision';
 import { ITEMS, gearMods, itemsIn, moveItem, quickMove, slotsOf, weaponOfGear, weaponOfItem, type Gear, type GearLoc, type ItemId } from './items';
 import type { GameState, Pos, Unit } from './types';
+import { hasFlag } from './perks';
 
 /**
  * What a fall leaves behind, and picking it up. Pure rules on the battle state: the ground is a list of item ids
@@ -54,10 +56,12 @@ export function deathChance(blow: { crit: boolean; damage: number; heavy: boolea
  * item only survives by its own lootChance: the useful small stuff mostly does, worn clothes mostly do not. Remains
  * are what is left of someone who was killed.
  */
-export function dropsOf(gear: Gear, fate: 'dead' | 'unconscious', rng: { rngState: number }): ItemId[] {
+export const SCROUNGER_BONUS = 0.25;
+
+export function dropsOf(gear: Gear, fate: 'dead' | 'unconscious', rng: { rngState: number }, bonus = 0): ItemId[] {
   const items = itemsIn(gear);
   if (fate === 'unconscious') return items;
-  const out = items.filter((id) => rand(rng) < (ITEMS[id]?.loot ?? 0));
+  const out = items.filter((id) => rand(rng) < (ITEMS[id]?.loot ?? 0) + bonus);
   out.push('remains');
   return out;
 }
@@ -67,12 +71,12 @@ export function dropsOf(gear: Gear, fate: 'dead' | 'unconscious', rng: { rngStat
  * caller). Rivals roll for death; fallen companions are always a loss, and their gear is theirs to be picked up.
  * Whatever is lootable lands on their tile and the unit is left with nothing.
  */
-export function onFall(state: GameState, victim: Unit, blow: { crit: boolean; damage: number; heavy: boolean }): 'dead' | 'unconscious' {
+export function onFall(state: GameState, victim: Unit, blow: { crit: boolean; damage: number; heavy: boolean }, by?: Unit | null): 'dead' | 'unconscious' {
   let fate: 'dead' | 'unconscious' = 'dead';
   if (victim.team === 'enemy') fate = rand(state) < deathChance(blow, victim) ? 'dead' : 'unconscious';
   victim.fate = fate;
   const gear = victim.gear ?? {};
-  const drops = victim.team === 'enemy' ? dropsOf(gear, fate, state) : itemsIn(gear);
+  const drops = victim.team === 'enemy' ? dropsOf(gear, fate, state, hasFlag(by ?? undefined, 'scrounger') ? SCROUNGER_BONUS : 0) : itemsIn(gear);
   if (drops.length > 0) groundList(state, victim.pos).push(...drops);
   victim.gear = {};
   return fate;
@@ -88,7 +92,14 @@ export function knockDown(
   target: Unit,
   attacker: Unit | null,
   blow: { crit: boolean; damage: number; heavy: boolean },
-): 'dead' | 'unconscious' | 'downed' {
+): 'dead' | 'unconscious' | 'downed' | 'held' {
+  // Iron Will: the first blow in a battle that should finish you simply does not, once.
+  if (hasFlag(target, 'ironWill') && !target.uses?.ironWill) {
+    target.uses = { ...target.uses, ironWill: 1 };
+    target.hp = 1;
+    state.log.push({ team: target.team, text: `${target.name} refuses to go down.`, at: [{ ...target.pos }] });
+    return 'held';
+  }
   target.alive = false;
   target.overwatch = false;
   delete target.status;
@@ -98,7 +109,7 @@ export function knockDown(
     return 'downed';
   }
   if (attacker) attacker.kills = (attacker.kills ?? 0) + 1;
-  return onFall(state, target, blow);
+  return onFall(state, target, blow, attacker);
 }
 
 /** A weapon gives out: take it out of whichever hand held it. The unit falls back to what is in the other hand, or fists. */
@@ -127,8 +138,11 @@ export function refreshFromGear(u: Unit, before: Gear): void {
   u.hp = Math.min(u.hp, u.maxHp);
   if (u.hp < 1 && u.alive) u.hp = 1;
   u.mobility += now.mobility - was.mobility;
-  u.aim += now.aim - was.aim;
-  u.defense += now.defense - was.defense;
+  u.aim += now.rangedAim - was.rangedAim;
+  u.meleeAim = (u.meleeAim ?? u.aim) + (now.meleeAim - was.meleeAim);
+  u.defense += now.rangedDefense - was.rangedDefense;
+  u.meleeDefense = (u.meleeDefense ?? u.defense) + (now.meleeDefense - was.meleeDefense);
+  u.sight = (u.sight ?? SIGHT_RANGE) + (now.sight - was.sight);
   u.critChance += now.crit - was.crit;
 }
 
@@ -158,7 +172,7 @@ function editGear(state: GameState, u: Unit, edit: Edit): GearResult {
     return { ok: false, error: r.error, ap: 0 };
   }
   const swapped = weaponOfGear(gear) !== weaponOfGear(before);
-  const ap = swapped ? SWAP_WEAPON_AP : 0;
+  const ap = swapped && !hasFlag(u, 'fastHands') ? SWAP_WEAPON_AP : 0;
   if (ap > u.ap) {
     tidyGround(state);
     return { ok: false, error: 'Swapping weapons takes 1 AP.', ap: 0 };
