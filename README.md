@@ -182,8 +182,8 @@ The overworld calls into the battle engine for encounters; base and research wil
 1. [x] Battle engine + playable prototype
 2. [x] Fog of war, dormant enemy pods, scamper, contact hint
 3. [x] Enemy AI: cover-to-cover advance, group cohesion, overwatch ambushes, shoot-and-scoot
-4. [ ] Camera pan/zoom for large maps
-5. [x] Unit model: clique x class, traits, injuries, levelling, squad pick, knock-down/revive, autosave (class abilities still to do)
+4. [x] Camera zoom and rotation
+5. [x] Unit model: clique x class, traits, injuries, levelling, squad pick, knock-down/revive, autosave, class and clique skills (charm, throws, incognito, patch up)
 6. [ ] Tech tree as data (spears -> metalwork -> chemistry/gunpowder -> crossbows -> steam -> electricity) gating weapons, armour, buildings
 7. [ ] Base view: building placement + resource loop
 8. [x] Free-roam world map (your painted map) with random encounters and assaultable sites
