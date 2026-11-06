@@ -336,6 +336,7 @@ export class BoardRenderer {
     for (const u of state.units) if (!u.alive && !u.downed && this.canSee(u, view)) this.drawFallen(u);
     for (const u of state.units) if (u.downed && !u.alive) this.drawDowned(u, state);
     for (const u of state.units) if (u.alive && this.canSee(u, view)) this.drawUnit(u, state, view);
+    this.drawLoot(state, view);
     this.drawMarkers(state, view); // after the units, so a sprite never hides a cover marker
     this.drawPreviewLabel(state, view);
     this.drawEffects();
@@ -527,6 +528,40 @@ export class BoardRenderer {
    * Everything that annotates the board and must stay readable: cover shields, hit-chance tags, range labels.
    * Drawn after the units (sprites are taller than a tile and would otherwise hide them) and upright.
    */
+  /** A little satchel on every visible tile with something lying on it (what fallen units left behind), with a count for more than one. */
+  private drawLoot(state: GameState, view: ViewState): void {
+    if (!state.ground) return;
+    const { ctx, tile } = this;
+    for (const [key, items] of Object.entries(state.ground)) {
+      if (items.length === 0) continue;
+      const [x, y] = key.split(',').map(Number);
+      if (view.visible && !(view.visible[y]?.[x] ?? false)) continue;
+      const c = this.center({ x, y });
+      const w = tile * 0.3;
+      const h = tile * 0.24;
+      const bx = c.x - tile * 0.46;
+      const by = c.y + tile * 0.14;
+      ctx.save();
+      ctx.fillStyle = '#9a6b3a';
+      ctx.strokeStyle = '#2b1a0c';
+      ctx.lineWidth = Math.max(1, tile * 0.04);
+      ctx.beginPath();
+      ctx.roundRect(bx, by, w, h, tile * 0.05);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#c99a5e';
+      ctx.fillRect(bx, by + h * 0.28, w, h * 0.16);
+      if (items.length > 1) {
+        ctx.fillStyle = '#e8b04a';
+        ctx.font = `bold ${Math.round(tile * 0.2)}px system-ui, sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(String(items.length), bx + w + tile * 0.03, by + h + tile * 0.02);
+      }
+      ctx.restore();
+    }
+  }
+
   private drawMarkers(state: GameState, view: ViewState): void {
     const { tile } = this;
     const sel = this.selected(state, view);

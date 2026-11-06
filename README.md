@@ -20,6 +20,7 @@ npm run build    # typecheck + production build
 | `WASD` / arrows | Walk (slides along the coast) |
 | Click the map | Travel there (A* route; clicking the sea snaps to the shore) |
 | `E` | Enter the site you're standing in (assault a hostile site, or rest at camp to heal everyone) |
+| `I` | Inventory: every member's gear and the party stash |
 | `G` | Debug overlay: walkable area and region circles |
 | `B` / `J` | Sandbox battles on the two hand-built maps |
 | `L` | On the game-over screen: load the last autosave |
@@ -35,6 +36,7 @@ npm run build    # typecheck + production build
 | `O` | Overwatch (uses remaining AP; reaction shot at -15 aim on the first enemy that moves into sight) |
 | `V` | Revive a knocked-down ally standing next to the selected unit (1 AP); clicking the downed unit does the same |
 | `R` | Reload (1 AP) |
+| `I` | Inventory for the selected unit, plus whatever lies on their tile (loot from fallen units). Armour, belt and pack changes are free; swapping what is in your hands costs 1 AP |
 | `E` | End turn |
 | `W` | Retreat to the world map |
 | `Enter` | After the fight: return to the world (a defeat is a squad wipe and ends the run) |
@@ -53,6 +55,14 @@ npm run build    # typecheck + production build
 - Walls block line of sight; cover objects can be shot over. Water is impassable.
 - Hit chance = aim + weapon mod - defense - cover - range falloff (4% per tile past optimal), clamped 5-95.
 - All randomness comes from a seeded PRNG stored on the game state, so battles are deterministic and replayable.
+
+## Gear, loot and prisoners
+
+- Every unit has slots: head, chest, legs, shoes, two belt slots (small items), left and right hand, back, and pack slots while a bag is worn on the back. The inventory screen (`I`) shows them on a paper doll next to the pack and whatever is lying around. Click an item then click where it goes, or double-click to equip / stow it.
+- Gear drives stats: the hands decide the weapon (a two-hander needs both hands; bare hands fall back to fists), and worn pieces add their bonuses. Starting kits match each class, so nothing changes until you swap something. Belt and pack items are stored only for now; there is no Use Item action yet.
+- A rival who drops rolls for **death or knockout**: crits, overkill and heavy weapons make death likelier (`deathChance`). Knocked-out rivals keep all their gear; a killed rival's items each survive by their own chance, and leave **remains** (for cooking, rituals and worse back at camp, later). Loot lands on the tile and shows as a satchel; stand on it and press `I`. Fallen companions drop everything they had. Fallen units don't block movement.
+- After a **won** fight a spoils screen lists what's left on the field (untick anything to leave it) and each rival still out cold: **Let go** (they may remember your mercy), **Capture** (kept as a captive) or **Execute** (leaves remains). Retreating or losing forfeits all of it. Loot goes in the party stash, captives in `world.captives`, and `world.mercy` counts who you spared, captured and killed.
+- Not in yet: camp handling of captives (workers, fighters, ransom, beatings, target and medical practice), using belt items, and a way to tell the story when a spared rival turns up again.
 
 ## World map
 
@@ -115,15 +125,18 @@ src/engine/   pure game logic, no DOM/rendering. Plain-JSON state (saveable), fu
   ai.ts         enemy decision-making, one action per call so the UI can pace it
   scenarios.ts  weapon table, squad template + hand-built sandbox maps: Beach Landing, Jungle Interior
   encounter.ts  seeded per-biome battle generator used by world encounters and site assaults
+  items.ts      item catalog, slots, equip / swap rules, gear stats, rival kits
+  loot.ts       death-vs-knockout roll, drops on tiles, in-battle gear changes
   roster.ts     persistent squad: cliques x classes, levels, traits, injuries; squad pick, deploy into a battle, fold the result back
 src/world/    the free-roam layer (also pure logic, no DOM, except render.ts)
   worlddata.json  coast, regions, sites for the painted map
   world.ts      walk grid, A* + string-pulling, sliding movement, danger-weighted encounters
   render.ts     draws the map, sites, party, route
+  spoils.ts     end-of-battle loot, prisoner fates, stash / captives / mercy
   save.ts       autosave to localStorage (validated, versioned, safe when storage is unavailable)
 src/render/   canvas board renderer (terrain, fog, overlays, hint arrow, effects, optional character sprites)
 src/assets/sprites/   drop-in character art, picked up automatically by name
-src/ui/       full-stage screens: title, character creation, squad pick
+src/ui/       full-stage screens: title, character creation, squad pick, inventory, spoils
 src/main.ts   mode switch (world <-> battle), input, panels, log, enemy-phase pacing
 ```
 

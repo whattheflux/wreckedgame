@@ -4,6 +4,7 @@ import { buildMap, foe, squadAt, WEAPONS } from './scenarios';
 import { SIGHT_RANGE } from './vision';
 import { randInt, type RngHolder } from './rng';
 import { rivalCrew } from './rivals';
+import { gearMods, rivalGear, weaponOfGear } from './items';
 
 export const ENCOUNTER_W = 30;
 export const ENCOUNTER_H = 18;
@@ -137,10 +138,22 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
       n++;
       const weapon = weaponFor(diff, m + pi);
       const kid = crew.members[n - 1];
+      const spec = foe(`e${n}`, kid.name, pos.x, pos.y, podId, weapon, 7 + diff + (weapon === WEAPONS.pole ? 2 : 0), 52 + diff * 4);
+      // What they carry rolls from its own stream so it never disturbs the map. Worn pieces make them harder to hurt.
+      const weaponKey = (Object.keys(WEAPONS) as Array<keyof typeof WEAPONS>).find((k) => WEAPONS[k] === weapon) ?? 'slingshot';
+      const gear = rivalGear(weaponKey, diff, { rngState: Math.imul(opts.seed | 0, 7919) + n });
+      const mods = gearMods(gear);
       units.push({
-        ...foe(`e${n}`, kid.name, pos.x, pos.y, podId, weapon, 7 + diff + (weapon === WEAPONS.pole ? 2 : 0), 52 + diff * 4),
+        ...spec,
         role: kid.role,
         sprite: kid.sprite,
+        gear,
+        weapon: weaponOfGear(gear),
+        hp: spec.hp + mods.hp,
+        defense: spec.defense + mods.defense,
+        mobility: spec.mobility + mods.mobility,
+        aim: spec.aim + mods.aim,
+        crit: spec.crit + mods.crit,
       });
     }
   });

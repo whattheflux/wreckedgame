@@ -1,6 +1,8 @@
 import raw from './worlddata.json';
 import type { Biome } from '../engine/types';
 import { rand } from '../engine/rng';
+import type { ItemId } from '../engine/items';
+import type { Captive, Mercy } from './spoils';
 import { createStarterRoster, type PlayerChoice, type Roster } from '../engine/roster';
 
 // ---------- data (see worlddata.json; coordinates are pixels in the reference map) ----------
@@ -286,6 +288,12 @@ export interface WorldState {
   /** total distance walked (stat) */
   walked: number;
   log: string[];
+  /** the party's shared pack: everything taken in fights that nobody is wearing. Absent on older saves; see `ensureStores`. */
+  stash?: ItemId[];
+  /** rivals kept prisoner */
+  captives?: Captive[];
+  /** how the player has treated people */
+  mercy?: Mercy;
 }
 
 export function createWorld(seed: number, player?: PlayerChoice): WorldState {

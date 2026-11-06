@@ -2,6 +2,7 @@ import type { Scenario, UnitSpec } from './battle';
 import type { GameState, Unit, Weapon } from './types';
 import { WEAPONS } from './scenarios';
 import { rand, type RngHolder } from './rng';
+import { gearMods, startingGear, weaponOfGear, type Gear } from './items';
 
 /**
  * The persistent squad. Everything here is plain JSON (saveable) and pure logic, like the rest of
@@ -138,6 +139,8 @@ export interface RosterMember {
   traits: TraitId[];
   injuries: Injury[];
   weapon: WeaponId;
+  /** what they wear and carry (slot -> item id). Absent on older saves: `gearOf` fills in the class starting kit. */
+  gear?: Gear;
   /** current HP, carried between fights; >= 1 while alive */
   hp: number;
   /** fell in battle and is gone for good (see `fateOfDowned`). Kept in the roster so the squad panel can remember them. */
@@ -146,6 +149,11 @@ export interface RosterMember {
   protagonist: boolean;
   /** the player character's body, which picks their art (absent on companions and on older saves) */
   look?: Look;
+}
+
+/** A member's gear, creating the class starting kit the first time it is needed (so old saves just work). */
+export function gearOf(m: RosterMember): Gear {
+  return (m.gear ??= startingGear(m.weapon, m.protagonist));
 }
 
 /** The art key for a roster member: companions by name, the player character by body. */
@@ -190,6 +198,7 @@ export function newMember(id: string, name: string, clique: Clique, schoolClass:
     traits: [],
     injuries: [],
     weapon: CLASSES[schoolClass].weapon,
+    gear: startingGear(CLASSES[schoolClass].weapon, protagonist),
     hp: 1,
     dead: false,
     protagonist,
@@ -250,7 +259,7 @@ export function baseStats(clique: Clique, schoolClass: SchoolClass, level: numbe
   };
 }
 
-/** Clique + class + level, then traits, then injuries, then floors. */
+/** Clique + class + level, then traits, then injuries, then what they wear, then floors. */
 export function effectiveStats(m: RosterMember): StatBlock {
   const s = baseStats(m.clique, m.schoolClass, m.level);
   const add = (mods: Partial<StatBlock>): void => {
@@ -258,11 +267,13 @@ export function effectiveStats(m: RosterMember): StatBlock {
   };
   for (const t of m.traits) add(TRAITS[t].mods);
   for (const i of m.injuries) add(INJURIES[i.id].mods);
+  add(gearMods(gearOf(m)));
   for (const k of Object.keys(s) as Array<keyof StatBlock>) s[k] = Math.max(STAT_FLOOR[k], s[k]);
   return s;
 }
 
-export const weaponOf = (m: RosterMember): Weapon => WEAPONS[m.weapon];
+/** What they hit with: whatever is in their hands. */
+export const weaponOf = (m: RosterMember): Weapon => weaponOfGear(gearOf(m));
 
 // ---------- deployment: roster -> battle ----------
 
@@ -282,6 +293,7 @@ export function memberSpec(m: RosterMember, x: number, y: number): UnitSpec {
     defense: s.defense,
     crit: s.crit,
     weapon: weaponOf(m),
+    gear: { ...gearOf(m) },
     sprite: spriteKey(m),
     ...(m.protagonist ? { protagonist: true } : {}),
   };
@@ -405,11 +417,13 @@ export function applyBattleResult(roster: Roster, state: GameState, rng: RngHold
     if (!u.alive && fateOf(m, u) === 'dead') {
       m.dead = true;
       m.hp = 0;
+      m.gear = {}; // what they carried was left where they fell
       fallen.push(m.id);
       notes.push(`${m.name} didn't make it.`);
       continue;
     }
 
+    m.gear = { ...(u.gear ?? gearOf(m)) }; // whatever they ended up wearing and carrying comes home with them
     if (completed) tickInjuries(m, notes); // before new injuries, so those keep their full duration
 
     if (downed) {

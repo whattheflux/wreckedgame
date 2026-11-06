@@ -3,6 +3,7 @@ import { pathTo, posKey, reachableTiles, type PathNode } from './grid';
 import { computeShot, resolveShot } from './combat';
 import { podsToWake, updateExplored } from './vision';
 import { coverValueVs, nearestUnit } from './tactics';
+import { gearForWeapon, type Gear } from './items';
 
 export interface UnitSpec {
   id: string;
@@ -25,6 +26,8 @@ export interface UnitSpec {
   protagonist?: boolean;
   /** key of the unit's art; see Unit.sprite */
   sprite?: string;
+  /** what the unit wears and carries; defaults to just `weapon` in the right hand */
+  gear?: Gear;
 }
 
 export interface Scenario {
@@ -67,6 +70,7 @@ function spawn(s: UnitSpec): Unit {
     dormant: s.team === 'enemy' && s.pod !== undefined,
     attacked: false,
     idleTurns: 0,
+    gear: s.gear ? { ...s.gear } : gearForWeapon(s.weapon),
     ...(s.protagonist ? { protagonist: true } : {}),
     ...(s.sprite ? { sprite: s.sprite } : {}),
   };

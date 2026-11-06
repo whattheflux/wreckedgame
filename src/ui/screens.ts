@@ -34,6 +34,10 @@ function show(html: string): HTMLDivElement {
   return overlay.firstElementChild as HTMLDivElement;
 }
 
+/** For other screens (inventory, spoils) that build their own card. */
+export const showCard = (html: string): HTMLDivElement => show(html);
+export const hideOverlayCard = hideOverlay;
+
 const statLine = (m: RosterMember): string => {
   const s = effectiveStats(m);
   return `HP ${s.hp} &middot; Aim ${s.aim} &middot; Def ${s.defense} &middot; Move ${s.mobility} &middot; Crit ${s.crit}`;

@@ -1,4 +1,4 @@
-import type { Skill, Unit, Weapon } from '../engine';
+import { ITEMS, weaponOfItem, type Gear, type Skill, type Unit, type Weapon } from '../engine';
 
 /** Pure view helpers for the bottom action bar: the hands display and the hover text. No DOM access here. */
 
@@ -68,16 +68,39 @@ export function iconKey(weaponName: string): string {
   return 'generic';
 }
 
+/** Art for an item that has some (weapons); null for anything drawn as a plain coloured tile. */
+export function itemArt(id: string): string | null {
+  const w = ITEMS[id]?.weapon ? weaponOfItem(id) : null;
+  return w ? svg(ICONS[iconKey(w.name)]) : null;
+}
+
+export const bareHandArt = (): string => svg(ICONS.hand);
+
 const svg = (inner: string): string => `<svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true">${inner}</svg>`;
 
 /**
  * The two hand slots under the action bar. The weapon sits in the right hand; a one-hander leaves the left hand
  * bare, a two-hander shows the same weapon again, faded, in the left.
  */
-export function handsHtml(w: Weapon): string {
+export function handsHtml(w: Weapon, gear?: Gear): string {
   const art = svg(ICONS[iconKey(w.name)]);
-  const left = w.hands === 2 ? `<div class="slot ghost" title="Left hand">${art}</div>` : `<div class="slot bare" title="Left hand (free)">${svg(ICONS.hand)}</div>`;
-  const right = `<div class="slot" title="Right hand">${art}</div>`;
+  const bare = (side: string): string => `<div class="slot bare" title="${side} hand (free)">${svg(ICONS.hand)}</div>`;
+  const held = (id: string | undefined, side: string): string => {
+    const wp = id ? weaponOfItem(id) : null;
+    return wp ? `<div class="slot" title="${side} hand: ${esc(wp.name)}">${svg(ICONS[iconKey(wp.name)])}</div>` : bare(side);
+  };
+  let left: string;
+  let right: string;
+  if (gear) {
+    // what is actually in the hands; a two-hander shows faded in the left too
+    right = held(gear.rightHand, 'Right');
+    const twoHander = !!gear.rightHand && (weaponOfItem(gear.rightHand)?.hands ?? 1) === 2;
+    left = twoHander ? `<div class="slot ghost" title="Left hand">${art}</div>` : held(gear.leftHand, 'Left');
+    if (!gear.rightHand && !gear.leftHand) right = bare('Right');
+  } else {
+    left = w.hands === 2 ? `<div class="slot ghost" title="Left hand">${art}</div>` : bare('Left');
+    right = `<div class="slot" title="Right hand">${art}</div>`;
+  }
   const traits = [w.hands === 2 ? '2-handed' : '1-handed', w.heavy ? 'heavy' : 'light'];
   return (
     `<div class="slots">${left}${right}</div>` +

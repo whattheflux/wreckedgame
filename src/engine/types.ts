@@ -1,3 +1,5 @@
+import type { Gear, ItemId } from './items';
+
 export type Team = 'player' | 'enemy';
 /** floor: walkable. wall: blocks movement + sight. half/full: cover objects (block movement, not sight). water: impassable. */
 export type Terrain = 'floor' | 'wall' | 'half' | 'full' | 'water';
@@ -73,6 +75,10 @@ export interface Unit {
   downs?: number;
   /** key of this unit's art (a file or folder in src/assets/sprites); defaults to the lowercase name */
   sprite?: string;
+  /** what the unit wears and carries (slot -> item id); the hand slots decide `weapon`, the worn slots its stats */
+  gear?: Gear;
+  /** how a non-leader fell: killed outright, or knocked out cold (still there at the end of a won fight, to be dealt with) */
+  fate?: 'dead' | 'unconscious';
 }
 
 export type BattleEvent =
@@ -87,12 +93,15 @@ export type BattleEvent =
       killed: boolean;
       /** the target was knocked down rather than killed (so `killed` is true but they can be revived) */
       downed?: boolean;
+      /** a rival went down: killed or knocked out */
+      fate?: 'dead' | 'unconscious';
       overwatch: boolean;
       hitChance: number;
     }
   | { type: 'revive'; unitId: string; targetId: string }
   | { type: 'overwatch'; unitId: string }
   | { type: 'reload'; unitId: string }
+  | { type: 'gear'; unitId: string }
   | { type: 'reveal'; podId: string; unitIds: string[] }
   | { type: 'turn'; team: Team; turn: number }
   | { type: 'end'; winner: Team };
@@ -118,4 +127,6 @@ export interface GameState {
   explored: boolean[][];
   /** player turns since a hostile pod was last discovered; drives the direction hint */
   turnsSinceContact: number;
+  /** items lying on tiles ("x,y" -> item ids): what fallen units left behind. Absent until something drops. */
+  ground?: Record<string, ItemId[]>;
 }

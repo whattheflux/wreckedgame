@@ -1,6 +1,7 @@
 import type { BattleEvent, CoverType, GameMap, GameState, Pos, Unit } from './types';
 import { coverAgainst, dist, hasLineOfSight, isFlanked } from './grid';
 import { rand, randInt } from './rng';
+import { onFall } from './loot';
 
 export const COVER_PENALTY: Record<CoverType, number> = { none: 0, half: 20, full: 40 };
 export const OVERWATCH_PENALTY = 15;
@@ -92,6 +93,7 @@ export function resolveShot(
   let damage = 0;
   let killed = false;
   let wentDown = false;
+  let fate: 'dead' | 'unconscious' | undefined;
 
   if (hit) {
     crit = rand(state) * 100 < preview.critChance;
@@ -110,12 +112,19 @@ export function resolveShot(
         wentDown = true;
       } else {
         attacker.kills = (attacker.kills ?? 0) + 1;
+        fate = onFall(state, target, { crit, damage, heavy: attacker.weapon.heavy });
       }
     }
   }
 
   const prefix = overwatch ? 'Overwatch: ' : '';
-  const fall = wentDown ? ` - ${target.name} is DOWN, needs a revive!` : ' - down!';
+  const fall = wentDown
+    ? ` - ${target.name} is DOWN, needs a revive!`
+    : fate === 'unconscious'
+      ? ' - knocked out!'
+      : fate === 'dead' && target.team === 'enemy'
+        ? ' - killed!'
+        : ' - down!';
   const outcome = hit ? `${crit ? 'CRIT ' : ''}${damage} dmg${killed ? fall : ''}` : 'miss';
   state.log.push({
     team: attacker.team,
@@ -132,6 +141,7 @@ export function resolveShot(
     damage,
     killed,
     ...(wentDown ? { downed: true } : {}),
+    ...(fate && target.team === 'enemy' ? { fate } : {}),
     overwatch,
     hitChance: preview.hitChance,
   };

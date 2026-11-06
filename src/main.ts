@@ -6,6 +6,15 @@ import {
   SCENARIOS,
   TRAITS,
   applyBattleResult,
+  bodiesAt,
+  gearOf,
+  lootAt,
+  moveGear,
+  moveItem,
+  quickMove,
+  quickMoveGear,
+  spriteKey,
+  weaponOf,
   computeShot,
   createBattle,
   deployRoster,
@@ -44,6 +53,8 @@ import {
 import { rand } from './engine/rng';
 import { esc, hideOverlay, overlayOpen, showCreate, showPrep, showTitle } from './ui/screens';
 import { attackTip, handsHtml, moveTip, skillTip, tipHtml, type Tip } from './ui/actionbar';
+import { showInventory, showSpoils, type InvView } from './ui/inventory';
+import { collectSpoils, ensureStores, resolveSpoils } from './world/spoils';
 import { clearSave, loadGame, saveGame } from './world/save';
 import { BoardRenderer, type ViewState } from './render/board';
 import { koUrl, preloadArt, spriteUrl } from './render/sprites';
@@ -339,10 +350,10 @@ let barShown: Array<{ b: Btn; el: HTMLButtonElement }> = [];
 
 function renderBar(sel: Unit | undefined): void {
   const skills = skillsOf(sel);
-  const sig = `${sel?.id ?? ''}|${sel?.weapon.name ?? ''}|${skills.map((k) => k.id).join(',')}`;
+  const sig = `${sel?.id ?? ''}|${sel?.weapon.name ?? ''}|${JSON.stringify(sel?.gear ?? {})}|${skills.map((k) => k.id).join(',')}`;
   if (sig !== barSig) {
     barSig = sig;
-    handsEl.innerHTML = sel ? handsHtml(sel.weapon) : '';
+    handsEl.innerHTML = sel ? handsHtml(sel.weapon, sel.gear) : '';
     barBtnsEl.innerHTML = '';
     const shown = [
       ...currentButtons.filter((b) => b.bar === 'main'),
@@ -398,12 +409,106 @@ function skillTipFor(id: string): (s: Unit | undefined) => Tip {
   };
 }
 
+function inventoryTip(s: Unit | undefined): Tip {
+  const here = s ? lootAt(state, s.pos).length : 0;
+  const lines = ['Change what you wear and carry. Armour, belt and pack changes are free; swapping what is in your hands costs 1 AP.'];
+  if (here > 0) lines.push(`There ${here === 1 ? 'is 1 item' : `are ${here} items`} on the ground here.`);
+  return { title: 'Inventory', cost: 'Free (a new weapon: 1 AP)', lines };
+}
+
+const unitStats = (hp: number, maxHp: number, aim: number, def: number, move: number, crit: number): string =>
+  `HP ${hp}/${maxHp} &middot; Aim ${aim} &middot; Def ${def} &middot; Move ${move} &middot; Crit ${crit}`;
+
+const weaponLine = (w: Unit['weapon'], ammo?: number): string =>
+  `${w.name}: ${w.damage[0]}-${w.damage[1]} dmg, range ${w.range}, ${w.hands}-handed, ${w.heavy ? 'heavy' : 'light'}${ammo === undefined ? '' : `, ammo ${ammo}/${w.clip}`}`;
+
+function unitView(u: Unit): InvView {
+  return {
+    name: u.name,
+    role: u.role,
+    sprite: u.sprite ?? u.name.toLowerCase(),
+    gear: u.gear ?? {},
+    stats: unitStats(u.hp, u.maxHp, u.aim, u.defense, u.mobility, u.critChance),
+    weapon: weaponLine(u.weapon, u.ammo),
+  };
+}
+
+/** I in a fight: the selected unit's gear, plus whatever lies on their tile (a fallen rival's loot). */
+function openBattleInventory(): void {
+  const sel = selected();
+  if (!sel || !canAct() || mode !== 'battle') return;
+  const u = (id: string): Unit => getUnit(state, id) as Unit;
+  showInventory({
+    title: 'Inventory',
+    note: () => `${u(sel.id).name} has ${u(sel.id).ap} AP. Swapping what is in your hands costs 1 AP; everything else is free.`,
+    people: living(state, 'player').map((x) => ({ id: x.id, name: x.name })),
+    current: sel.id,
+    view: (id) => unitView(u(id)),
+    listTitle: 'On the ground here',
+    list: (id) => lootAt(state, u(id).pos),
+    bodies: (id) => bodiesAt(state, u(id).pos).map((b) => `${b.name}: ${b.fate === 'unconscious' ? 'out cold' : b.fate === 'dead' ? 'dead' : 'down'}`),
+    move: (id, from, to) => moveGear(state, u(id), from, to),
+    quick: (id, from) => quickMoveGear(state, u(id), from),
+    onClose: () => refresh(),
+  });
+}
+
+/** I on the map: every living member's gear, and the party stash to swap with. */
+function openWorldInventory(): void {
+  if (mode !== 'world' || over) return;
+  const stash = ensureStores(world).stash;
+  const live = world.roster.filter((m) => !m.dead);
+  const member = (id: string): RosterMember => live.find((m) => m.id === id) ?? live[0];
+  const settle = (m: RosterMember): void => {
+    m.hp = Math.min(m.hp, effectiveStats(m).hp); // taking off a bonus can lower the cap
+  };
+  showInventory({
+    title: 'Inventory',
+    note: () => 'Gear changes are free out here. Anything not worn or carried goes in the party stash.',
+    people: live.map((m) => ({ id: m.id, name: m.name })),
+    current: (live.find((m) => m.protagonist) ?? live[0]).id,
+    view: (id) => {
+      const m = member(id);
+      const s = effectiveStats(m);
+      const w = weaponOf(m);
+      return {
+        name: m.name,
+        role: `${CLIQUES[m.clique].label} / ${CLASSES[m.schoolClass].label} Lv ${m.level}`,
+        sprite: spriteKey(m),
+        gear: gearOf(m),
+        stats: unitStats(m.hp, s.hp, s.aim, s.defense, s.mobility, s.crit),
+        weapon: weaponLine(w),
+      };
+    },
+    listTitle: 'Party stash',
+    list: () => stash,
+    move: (id, from, to) => {
+      const m = member(id);
+      const r = moveItem(gearOf(m), stash, from, to);
+      settle(m);
+      return r;
+    },
+    quick: (id, from) => {
+      const m = member(id);
+      const r = quickMove(gearOf(m), stash, from);
+      settle(m);
+      return r;
+    },
+    onClose: () => {
+      lastWorldSig = '';
+      saveGame(world);
+      updateWorldPanel();
+    },
+  });
+}
+
 const battleButtons: Btn[] = [
   { label: 'Move (M)', name: 'Move', bar: 'main', tip: moveTip, key: 'm', run: () => setAimMode('move'), enabled: (s) => canAct() && !!s && s.ap > 0, active: () => view.mode === 'move' },
   { label: 'Basic Attack (F)', name: 'Basic Attack', bar: 'main', tip: attackTip, key: 'f', run: () => setAimMode('shoot'), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0, active: () => view.mode === 'shoot' },
   { label: 'Overwatch (O)', name: 'Overwatch', bar: 'skill', skillId: 'overwatch', tip: skillTipFor('overwatch'), key: 'o', run: () => act(setOverwatch(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0 },
   { label: 'Revive (V)', name: 'Revive', bar: 'skill', skillId: 'revive', tip: skillTipFor('revive'), key: 'v', run: () => reviveAdjacent(), enabled: (s) => canAct() && !!s && s.ap > 0 && revivableBy(state, s).length > 0 },
   { label: 'Reload (R)', name: 'Reload', bar: 'skill', skillId: 'reload', tip: skillTipFor('reload'), key: 'r', run: () => act(reload(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo < s.weapon.clip },
+  { label: 'Inventory (I)', name: 'Inventory', bar: 'main', tip: inventoryTip, key: 'i', run: () => openBattleInventory(), enabled: (s) => canAct() && !!s },
   { label: 'End turn (E)', key: 'e', run: () => startEnemyPhase(), enabled: () => canAct() },
   { label: 'Continue (Enter)', key: 'enter', run: () => finishBattle(), enabled: () => !!state.winner && !busy && !battleCtx?.sandbox },
   { label: 'Retreat (W)', key: 'w', run: () => retreat(), enabled: () => !busy && (!state.winner || !!battleCtx?.sandbox) },
@@ -413,6 +518,7 @@ const battleButtons: Btn[] = [
 
 const worldButtons: Btn[] = [
   { label: 'Enter site (E)', key: 'e', run: () => enterSite(siteNear(world.pos)), enabled: () => !!siteNear(world.pos) },
+  { label: 'Inventory (I)', key: 'i', run: () => openWorldInventory(), enabled: () => !over },
   { label: 'Debug overlay (G)', key: 'g', run: () => (worldView.debug = !worldView.debug), enabled: () => true, active: () => worldView.debug },
   { label: 'Sandbox: Beach (B)', key: 'b', run: () => startSandbox(0), enabled: () => true },
   { label: 'Sandbox: Jungle (J)', key: 'j', run: () => startSandbox(1), enabled: () => true },
@@ -747,7 +853,17 @@ function finishBattle(): void {
   }
   for (const note of report.notes) worldLog(note);
   checkGameOver(report.outcome);
-  enterWorld();
+  const spoils = collectSpoils(state);
+  if (over || (spoils.loot.length === 0 && spoils.prisoners.length === 0 && spoils.killed === 0)) {
+    enterWorld();
+    return;
+  }
+  // The field is ours: take what we want, then decide what to do with anyone left out cold.
+  showSpoils(spoils, ctx.label, (choice) => {
+    for (const note of resolveSpoils(world, spoils, choice)) worldLog(note);
+    hideOverlay();
+    enterWorld();
+  });
 }
 
 function retreat(): void {
@@ -866,7 +982,7 @@ function updateWorldPanel(): void {
   const site = siteNear(world.pos);
   const clearable = WORLD.sites.filter((s) => s.difficulty);
   const done = clearable.filter((s) => world.cleared[s.id]).length;
-  const sig = [region.id, site?.id ?? '-', site ? !!world.cleared[site.id] : '', world.scrap, done, rosterSig(world.roster), over ?? ''].join('|');
+  const sig = [region.id, site?.id ?? '-', site ? !!world.cleared[site.id] : '', world.scrap, done, rosterSig(world.roster), over ?? '', world.stash?.length ?? 0, world.captives?.length ?? 0].join('|');
   if (sig === lastWorldSig) return;
   lastWorldSig = sig;
 
@@ -885,6 +1001,9 @@ function updateWorldPanel(): void {
   lines.push(`<h2>The Island</h2>`);
   lines.push(`<div><b>${region.name}</b> <span style="opacity:.7">${region.biome}</span><br>Danger: ${danger}</div>`);
   lines.push(`<div style="margin-top:6px">Scrap: <b>${world.scrap}</b> &middot; Sites cleared: ${done}/${clearable.length}</div>`);
+  if ((world.stash?.length ?? 0) > 0 || (world.captives?.length ?? 0) > 0) {
+    lines.push(`<div style="margin-top:4px">Stash: <b>${world.stash?.length ?? 0}</b> item${world.stash?.length === 1 ? '' : 's'} &middot; Captives: <b>${world.captives?.length ?? 0}</b> <span style="opacity:.6">(I: inventory)</span></div>`);
+  }
   if (site) {
     let status = '';
     if (site.difficulty) status = world.cleared[site.id] ? ' &mdash; cleared' : ` &mdash; hostile (${'!'.repeat(site.difficulty)}), reward ${site.reward ?? 0} scrap`;
