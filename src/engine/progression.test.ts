@@ -417,7 +417,7 @@ describe('rivals keep up', () => {
 
   it('are tougher against a seasoned squad than a fresh one', () => {
     const fresh = rivalsOf(1);
-    const late = rivalsOf(9);
+    const late = rivalsOf(13);
     expect(late).toHaveLength(fresh.length);
     const total = (us: typeof fresh, k: 'aim' | 'hp' | 'defense'): number => us.reduce((n, u) => n + (u[k] ?? 0), 0);
     for (const k of ['aim', 'hp', 'defense'] as const) expect(total(late, k), k).toBeGreaterThan(total(fresh, k));
@@ -427,14 +427,15 @@ describe('rivals keep up', () => {
   it('stop improving at the cap, and a missing level means a fresh squad', () => {
     expect(veterancy(1)).toBe(0);
     expect(veterancy(undefined)).toBe(0);
-    expect(veterancy(4)).toBe(3);
-    expect(veterancy(MAX_LEVEL * 3)).toBe(VET_CAP);
-    expect(rivalsOf(50)[0].aim).toBe(rivalsOf(1 + VET_CAP)[0].aim);
+    expect(veterancy(2)).toBe(0); // they only notice every second level
+    expect(veterancy(5)).toBe(2);
+    expect(veterancy(MAX_LEVEL * 4)).toBe(VET_CAP);
+    expect(rivalsOf(99)[0].aim).toBe(rivalsOf(1 + VET_CAP * 2)[0].aim);
   });
 
   it('leaves the map and the crew alone: only their stats move', () => {
     const fresh = rivalsOf(1);
-    const late = rivalsOf(6);
+    const late = rivalsOf(9);
     expect(late.map((u) => [u.x, u.y])).toEqual(fresh.map((u) => [u.x, u.y]));
     expect(late.map((u) => u.name)).toEqual(fresh.map((u) => u.name));
     expect(late.map((u) => u.weapon.name)).toEqual(fresh.map((u) => u.weapon.name));

@@ -27,15 +27,22 @@ export interface EncounterOptions {
   level?: number;
 }
 
-/** What one level of the squad's experience is worth to the people they meet. */
-export const VET_AIM = 2;
-export const VET_HP = 1;
-export const VET_DEFENSE = 1;
+/**
+ * What one level of the squad's experience is worth to the people they meet. Deliberately less than
+ * the squad gains per level: the squad also picks up perks and better gear, and a run where growing
+ * stronger left you worse off would be a pointless run. `balance.test.ts` is what keeps this honest.
+ */
+export const VET_AIM = 1;
+/** A rival gains a point of health, and a point of defense, every this many levels. */
+export const VET_HP_EVERY = 2;
+export const VET_DEFENSE_EVERY = 2;
 /** However long a run goes on, rivals stop improving here (the squad still has perks and gear). */
-export const VET_CAP = 8;
+export const VET_CAP = 6;
+/** Rivals pick up one step of this for every this many levels the squad gains. */
+export const VET_PER_LEVELS = 2;
 
 /** How much tougher rivals are for a squad of this average level. */
-export const veterancy = (level = 1): number => Math.max(0, Math.min(VET_CAP, Math.round(level) - 1));
+export const veterancy = (level = 1): number => Math.max(0, Math.min(VET_CAP, Math.floor((Math.round(level) - 1) / VET_PER_LEVELS)));
 
 /** How cluttered each ground type is. Counts are attempts; sizes are max edge length in tiles. */
 interface Profile {
@@ -166,7 +173,7 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
         pos.y,
         podId,
         weapon,
-        7 + diff + (weapon === WEAPONS.pole || weapon.melee ? 2 : 0) + vet * VET_HP,
+        7 + diff + (weapon === WEAPONS.pole || weapon.melee ? 2 : 0) + Math.floor(vet / VET_HP_EVERY),
         52 + diff * 4 + vet * VET_AIM,
       );
       // What they carry rolls from its own stream so it never disturbs the map. Worn pieces make them harder to hurt.
@@ -181,8 +188,8 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
         gear,
         weapon: weaponOfGear(gear),
         hp: spec.hp + mods.hp,
-        defense: spec.defense + mods.rangedDefense + vet * VET_DEFENSE,
-        meleeDefense: spec.defense + mods.meleeDefense + vet * VET_DEFENSE,
+        defense: spec.defense + mods.rangedDefense + Math.floor(vet / VET_DEFENSE_EVERY),
+        meleeDefense: spec.defense + mods.meleeDefense + Math.floor(vet / VET_DEFENSE_EVERY),
         mobility: spec.mobility + mods.mobility,
         aim: spec.aim + mods.rangedAim,
         meleeAim: spec.aim + mods.meleeAim,

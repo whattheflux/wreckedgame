@@ -156,7 +156,20 @@ The cap is level 12. Levelling decides nothing on its own: it queues *pending pi
 
 Saves written before any of this are migrated on load: the character is rebuilt at level 1 and handed back every pick their level had earned.
 
-Rival schools scale with the squad's average level (`veterancy` in `encounter.ts`), so a late-run fight is not a walkover.
+Rival schools scale with the squad's average level (`veterancy` in `encounter.ts`), so a late-run fight is not a walkover — but deliberately slower than the squad grows, because a run where getting stronger left you worse off would be a pointless run.
+
+### Where the difficulty curve sits
+
+`balance.test.ts` plays whole battles with a real roster on one side and a generated rival school on the other, **driving both sides with the same brain** (`aiStep` takes the team, so neither side is handicapped by how well its policy was written). It prints the table when you run `npm test`:
+
+```
+level 1  vs difficulty 1    won 100%
+level 1  vs difficulty 4    won  38%
+level 6  vs difficulty 4    won  69%
+level 12 vs difficulty 4    won  88%
+```
+
+Easy fights are winnable on day one, the hardest site is a bad idea fresh, the middle of a run already feels better, and the end is strong without being a formality. The test asserts the shape of that rather than the exact numbers, so it fails if a change makes the game trivial or impossible, and the table tells you what the change actually did. It understates the middle a little: the harness spends level-ups with `autoSpend`, which spreads points, and it never upgrades anyone's gear.
 
 ### Rivals learn too
 
@@ -240,7 +253,7 @@ src/engine/   pure game logic, no DOM/rendering. Plain-JSON state (saveable), fu
   hint.ts       "contact hint": direction to the nearest undiscovered pod
   tactics.ts    shared AI maths: expected incoming damage, cover value, nearest unit
   battle.ts     turn/AP state machine: move, shoot, overwatch, reload, pod wake + scamper, end turn
-  ai.ts         enemy decision-making, one action per call so the UI can pace it
+  ai.ts         decision-making for either side, one action per call so the UI can pace it
   scenarios.ts  weapon table, squad template + hand-built sandbox maps: Beach Landing, Jungle Interior
   encounter.ts  seeded per-biome battle generator used by world encounters and site assaults
   items.ts      item catalog, slots, equip / swap rules, gear stats, rival kits

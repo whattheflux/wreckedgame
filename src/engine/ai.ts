@@ -1,4 +1,4 @@
-import type { BattleEvent, GameState, Pos, Unit } from './types';
+import type { BattleEvent, GameState, Pos, Team, Unit } from './types';
 import { computeShot } from './combat';
 import { canUseSkills, hasStatus, isHiddenFrom } from './status';
 import { avg, coverValueVs, nearestUnit, threatAt } from './tactics';
@@ -47,11 +47,14 @@ function shotValue(pv: ReturnType<typeof computeShot>, target: Unit): number {
 const readySkills = (state: GameState, u: Unit): Skill[] =>
   (u.skills ?? []).map((id) => EXTRA_SKILLS[id]).filter((k): k is Skill => !!k && skillBlock(state, u, k) === null);
 
+/** The other side, from this one's point of view. */
+export const otherTeam = (team: Team): Team => (team === 'player' ? 'enemy' : 'player');
+
 function decide(state: GameState, u: Unit): Action {
   const melee = !!u.weapon.melee;
   if (!melee && u.ammo <= 0) return { kind: 'reload' };
   // hidden (incognito) units can't be seen from a distance, so they aren't targets or threats
-  const players = living(state, 'player').filter((p) => !isHiddenFrom(p, u));
+  const players = living(state, otherTeam(u.team)).filter((p) => !isHiddenFrom(p, u));
   if (players.length === 0) return { kind: 'idle' };
   const ready = readySkills(state, u);
   const has = (id: string): Skill | undefined => ready.find((k) => k.id === id);
@@ -66,7 +69,7 @@ function decide(state: GameState, u: Unit): Action {
   const watchers = players.filter((p) => p.overwatch && p.ammo > 0);
   const isWatched = (pos: Pos): boolean =>
     watchers.some((o) => computeShot(state.map, o, o.pos, { defense: u.defense, meleeDefense: u.meleeDefense, pos, hp: u.hp }, true).canShoot);
-  const allies = living(state, 'enemy').filter((a) => a.id !== u.id && !a.dormant);
+  const allies = living(state, u.team).filter((a) => a.id !== u.id && !a.dormant);
 
   // 1. Already fired this turn and out in the open: shoot-and-scoot into cover, staying within weapon range.
   const threatHere = threatAt(state, u, u.pos, players);
@@ -205,15 +208,18 @@ function decide(state: GameState, u: Unit): Action {
 }
 
 /**
- * Perform ONE enemy action (so the UI can pace and animate them). Returns the events,
- * or null when every enemy has finished and the turn is handed back to the player.
+ * Perform ONE action for the side whose turn it is (so the UI can pace and animate them). Returns
+ * the events, or null when everyone on that side has finished and the turn has been handed over.
  * Dormant pods have 0 AP and are skipped. Every branch spends AP, so a turn always terminates.
+ *
+ * The side is a parameter because the same brain plays either one: that is what makes the balance
+ * harness a fair measurement rather than a test of how well the player policy was written.
  */
-export function enemyStep(state: GameState): BattleEvent[] | null {
-  if (state.winner || state.active !== 'enemy') return null;
-  const unit = state.units.find((u) => u.team === 'enemy' && u.alive && u.ap > 0);
+export function aiStep(state: GameState, team: Team = 'enemy'): BattleEvent[] | null {
+  if (state.winner || state.active !== team) return null;
+  const unit = state.units.find((u) => u.team === team && u.alive && u.ap > 0);
   if (!unit) {
-    endTurn(state); // every enemy is spent: hand the turn back to the player
+    endTurn(state); // everyone is spent: hand the turn over
     return null;
   }
 
@@ -246,3 +252,6 @@ export function enemyStep(state: GameState): BattleEvent[] | null {
   if (!result.ok) unit.ap = 0; // never loop on an invalid decision
   return result.events;
 }
+
+/** One rival action. The enemy phase in the game is this, called until it returns null. */
+export const enemyStep = (state: GameState): BattleEvent[] | null => aiStep(state, 'enemy');
