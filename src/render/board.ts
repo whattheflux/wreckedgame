@@ -1,5 +1,5 @@
 import type { GameState, Pos, Unit } from '../engine/types';
-import { coverAgainst, dist, posKey, type PathNode } from '../engine/grid';
+import { coverAgainst, dist, pathTo, posKey, type PathNode } from '../engine/grid';
 import type { Hint } from '../engine/hint';
 import { computeShot, EXPOSED_CRIT_BONUS, type ShotPreview } from '../engine/combat';
 import { DIRS, dirFromDelta, koUrl, loadedImage, spriteUrl, type Dir } from './sprites';
@@ -77,6 +77,43 @@ export class BoardRenderer {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2D canvas not available');
     this.ctx = ctx;
+  }
+
+  /** Units mid-walk: they glide tile to tile along their path. Purely visual; the game state already has them at the end. */
+  private walks = new Map<string, { pts: Pos[]; start: number; stepMs: number }>();
+
+  /**
+   * Walk a unit along `path` (the tiles after `from`, as in a move event), one square at a time. Returns how long it
+   * takes in ms, so the caller can wait for it before the next thing happens.
+   */
+  walk(unitId: string, from: Pos, path: Pos[], stepMs = 130): number {
+    if (path.length === 0) return 0;
+    this.walks.set(unitId, { pts: [from, ...path], start: performance.now(), stepMs });
+    return path.length * stepMs;
+  }
+
+  /** Is anyone still walking? */
+  isWalking(): boolean {
+    const now = performance.now();
+    for (const w of this.walks.values()) if (now - w.start < (w.pts.length - 1) * w.stepMs) return true;
+    return false;
+  }
+
+  /** Where to draw a unit: along its walk if it has one (turning to face each step), else where it is. `hop` lifts it mid-step. */
+  private displayPos(u: Unit): { pos: Pos; hop: number } {
+    const w = this.walks.get(u.id);
+    if (!w) return { pos: u.pos, hop: 0 };
+    const t = (performance.now() - w.start) / w.stepMs;
+    if (t >= w.pts.length - 1) {
+      this.walks.delete(u.id);
+      return { pos: u.pos, hop: 0 };
+    }
+    const i = Math.floor(t);
+    const f = t - i;
+    const a = w.pts[i];
+    const b = w.pts[i + 1];
+    this.face(u.id, a, b);
+    return { pos: { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f }, hop: Math.sin(f * Math.PI) };
   }
 
   /** Turn a unit toward `to` (a move step or a target); no-op if the points coincide. */
@@ -496,6 +533,38 @@ export class BoardRenderer {
       }
     }
 
+    // Hovering a reachable tile: the route the unit will take, drawn on the ground.
+    if (view.mode === 'move' && view.reach && view.hover && hoverNode && hoverNode.cost > 0) {
+      const route = [sel.pos, ...pathTo(view.reach, posKey(view.hover.x, view.hover.y))];
+      const dash = hoverNode.cost > sel.mobility;
+      const col = dash ? 'rgba(255,205,80,0.95)' : 'rgba(110,190,255,0.95)';
+      const pts = route.map((q) => this.rawCenter(q));
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.lineWidth = Math.max(4, tile * 0.16);
+      ctx.beginPath();
+      pts.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
+      ctx.stroke();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = Math.max(2, tile * 0.08);
+      ctx.stroke();
+      // a dot on every square passed through, and a ring on the destination
+      ctx.fillStyle = col;
+      for (const q of pts.slice(1, -1)) {
+        ctx.beginPath();
+        ctx.arc(q.x, q.y, Math.max(2, tile * 0.07), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const end = pts[pts.length - 1];
+      ctx.lineWidth = Math.max(2, tile * 0.07);
+      ctx.beginPath();
+      ctx.arc(end.x, end.y, tile * 0.3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Weapon range: green ring = full accuracy, amber ring = maximum range. Brightest while aiming.
     // Hovering a reachable tile shows the same rings from there, and what you could hit from it.
     const aiming = view.mode === 'shoot';
@@ -568,6 +637,11 @@ export class BoardRenderer {
     if (!sel) return;
     const foes = state.units.filter((e) => e.alive && e.team !== sel.team && this.canSee(e, view));
     const hoverNode = view.hover && view.reach ? view.reach.get(posKey(view.hover.x, view.hover.y)) : undefined;
+    if (view.mode === 'move' && view.hover && hoverNode && hoverNode.cost > 0) {
+      const c = this.center(view.hover);
+      const ap = Math.ceil(hoverNode.cost / sel.mobility);
+      this.drawTag(ap > 1 ? '2 AP (dash)' : '1 AP', c.x, c.y - tile * 0.62, ap > 1 ? '#ffd27a' : '#9fd4ff');
+    }
 
     // Cover you would get on each reachable tile, against the nearest enemy you can see.
     if (view.mode === 'move' && view.reach && foes.length) {
@@ -800,7 +874,8 @@ export class BoardRenderer {
 
   private drawUnit(u: Unit, state: GameState, view: ViewState): void {
     const { ctx, tile } = this;
-    const c = this.center(u.pos);
+    const shown = this.displayPos(u);
+    const c = this.center(shown.pos);
     const r = tile * 0.34;
     const isSel = u.id === view.selectedId;
     const exhausted = u.team === 'player' && state.active === 'player' && u.ap <= 0;
@@ -808,7 +883,7 @@ export class BoardRenderer {
     const art = spriteFor(u, this.facingOf(u));
     // Art exists but is still arriving: draw nothing yet instead of flashing the placeholder circle.
     if (!art && spriteUrl(u.sprite ?? u.name.toLowerCase(), this.facingOf(u))) return;
-    const feetY = c.y + tile * 0.42;
+    const feetY = c.y + tile * 0.42 - shown.hop * tile * 0.07;
     const artH = tile * 1.6;
 
     if (art) {

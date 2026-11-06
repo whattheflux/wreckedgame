@@ -117,6 +117,8 @@ interface BattleCtx {
   sandbox: boolean;
   /** a night attack on camp: the enemy starts awake and close */
   ambush?: boolean;
+  /** the word flashed when the fight starts: Ambush, Assault, Skirmish */
+  banner?: string;
 }
 
 /** Set while a night ambush is being fought: when it ends, morning comes. */
@@ -158,6 +160,73 @@ const selected = (): Unit | undefined => {
   return u && u.alive ? u : undefined;
 };
 
+// ---------- banners: how a fight opens and how it ends ----------
+
+const bannerEl = document.getElementById('banner') as HTMLDivElement;
+let bannerTimer = 0;
+let endBannerQueued = false;
+
+function esc2(t: string): string {
+  return t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string);
+}
+
+/** A big word across the board that fades after a moment: Ambush, Assault... */
+function showBanner(word: string, sub: string): void {
+  window.clearTimeout(bannerTimer);
+  bannerEl.className = 'start';
+  bannerEl.innerHTML = `<div class="word">${esc2(word)}</div><div class="subtitle">${esc2(sub)}</div>`;
+  bannerEl.hidden = false;
+  bannerTimer = window.setTimeout(() => {
+    if (bannerEl.className === 'start') bannerEl.hidden = true;
+  }, 2200);
+}
+
+function hideEndBanner(): void {
+  endBannerQueued = false;
+  window.clearTimeout(bannerTimer);
+  bannerEl.hidden = true;
+  bannerEl.innerHTML = '';
+}
+
+/** The fight is decided: Victory or Defeat, with what to do next (Loot or Leave after a win). Shown once. */
+function showEndBanner(): void {
+  if (!state.winner || mode !== 'battle') return;
+  const won = state.winner === 'player';
+  const ctx = battleCtx;
+  window.clearTimeout(bannerTimer);
+  let sub = '';
+  let buttons = '';
+  if (ctx?.sandbox) {
+    sub = 'Sandbox: nothing carries over.';
+    buttons = '<button data-end="restart" class="primary">Restart</button><button data-end="next">Next map</button>';
+  } else if (won) {
+    const spoils = collectSpoils(state);
+    const hasSpoils = spoils.loot.length > 0 || spoils.prisoners.length > 0;
+    sub = hasSpoils
+      ? `${spoils.loot.length} item${spoils.loot.length === 1 ? '' : 's'} on the field${spoils.prisoners.length ? `, ${spoils.prisoners.length} rival${spoils.prisoners.length === 1 ? '' : 's'} out cold` : ''}.`
+      : 'Nothing left on the field.';
+    buttons = hasSpoils
+      ? '<button data-end="loot" class="primary">Loot (Enter)</button><button data-end="leave" title="Leave the loot where it lies. Anyone out cold is let go.">Leave</button>'
+      : '<button data-end="loot" class="primary">Continue (Enter)</button>';
+  } else {
+    sub = state.units.some((u) => u.team === 'player' && u.protagonist && !u.alive && !u.downed) ? 'Your leader has fallen.' : 'The squad is down.';
+    buttons = '<button data-end="loot" class="primary">Continue (Enter)</button>';
+  }
+  bannerEl.className = `end ${won ? 'win' : 'loss'}`;
+  bannerEl.innerHTML = `<div class="word">${won ? 'Victory' : 'Defeat'}</div><div class="subtitle">${esc2(sub)}</div><div class="choices">${buttons}</div>`;
+  bannerEl.hidden = false;
+}
+
+bannerEl.addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLElement>('[data-end]');
+  if (!b) return;
+  const what = b.dataset.end;
+  if (what === 'restart') restart();
+  else if (what === 'next') restart(true);
+  else if (what === 'leave') finishBattle({ leave: true });
+  else finishBattle();
+});
+
 const canAct = (): boolean => mode === 'battle' && !busy && !state.winner && state.active === 'player';
 
 function toast(text: string): void {
@@ -181,13 +250,20 @@ function flushLog(): void {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-function playEffects(events: BattleEvent[]): void {
+/** Play the visuals for a batch of events. Returns how long (ms) any walking takes, so the caller can wait for it. */
+function playEffects(events: BattleEvent[]): number {
+  let walkMs = 0;
   // Visibility is refreshed first so a pod that just woke is already drawn when its flash appears.
   view.visible = visibleTiles(state);
   for (const ev of events) {
     if (ev.type === 'move') {
       const last = ev.path[ev.path.length - 1];
       if (last) renderer.face(ev.unitId, ev.path.length > 1 ? ev.path[ev.path.length - 2] : ev.from, last);
+      // Walk it square by square, unless it all happened out of sight.
+      if (last && (seen(ev.from) || seen(last))) {
+        const mover = getUnit(state, ev.unitId);
+        walkMs = Math.max(walkMs, renderer.walk(ev.unitId, ev.from, ev.path, mover?.team === 'enemy' ? WALK_MS_ENEMY : WALK_MS_PLAYER));
+      }
       continue;
     }
     if (ev.type === 'reveal') {
@@ -210,7 +286,12 @@ function playEffects(events: BattleEvent[]): void {
     renderer.addShotEffect(a.pos, t.pos, ev.hit, text, ev.crit);
     if (ev.downed) renderer.addTextEffect(t.pos, 'DOWN!', '#e0674e', 2200);
   }
+  return walkMs;
 }
+
+/** Time per square when a unit walks. Rivals go a little slower so you can follow what they are doing. */
+const WALK_MS_PLAYER = 120;
+const WALK_MS_ENEMY = 160;
 
 function select(id: string | null, snap = false): void {
   view.selectedId = id;
@@ -549,6 +630,10 @@ const gameOverButtons: Btn[] = [
 
 function refresh(): void {
   if (mode !== 'battle') return;
+  if (state.winner && !endBannerQueued && !busy) {
+    endBannerQueued = true;
+    window.setTimeout(showEndBanner, 900); // let the last shot land first
+  }
   const sel = selected();
   if (view.selectedId && !sel) view.selectedId = null;
 
@@ -656,8 +741,19 @@ function act(res: ActionResult): void {
     toast(res.error ?? 'Cannot do that');
     return;
   }
-  playEffects(res.events);
+  const walkMs = playEffects(res.events);
   view.mode = 'move';
+  if (walkMs > 0) {
+    // Let the walk play out before anything else happens (next unit, enemy phase, win check).
+    busy = true;
+    refresh();
+    window.setTimeout(() => {
+      if (mode !== 'battle') return;
+      busy = false;
+      afterPlayerAction();
+    }, walkMs + 60);
+    return;
+  }
   afterPlayerAction();
 }
 
@@ -726,10 +822,10 @@ function startEnemyPhase(): void {
       refresh();
       return;
     }
-    playEffects(ev);
+    const walkMs = playEffects(ev);
     followEnemy(ev);
     refresh();
-    window.setTimeout(tick, ev.length > 0 ? 650 : 100);
+    window.setTimeout(tick, ev.length > 0 ? Math.max(650, walkMs + 350) : 100);
   };
   window.setTimeout(tick, 450);
 }
@@ -781,6 +877,8 @@ function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
   barEl.hidden = false;
   focusSelected(true);
   toast(ctx.label);
+  hideEndBanner();
+  showBanner(ctx.banner ?? (ctx.sandbox ? 'Skirmish' : 'Battle'), ctx.label);
   refresh();
 }
 
@@ -806,7 +904,7 @@ function beginAssault(scenario: Scenario, ctx: BattleCtx): void {
 
 function startSandbox(i: number): void {
   scenarioIndex = i;
-  beginBattle(SCENARIOS[i], { label: `Sandbox: ${SCENARIOS[i].name}`, site: null, reward: 0, sandbox: true });
+  beginBattle(SCENARIOS[i], { label: `Sandbox: ${SCENARIOS[i].name}`, site: null, reward: 0, sandbox: true, banner: 'Skirmish' });
 }
 
 function worldLog(text: string): void {
@@ -857,9 +955,10 @@ function checkGameOver(outcome?: Outcome): boolean {
 }
 
 /** Return from a finished fight: rewards on victory; a defeat is a wipe, which ends the run. */
-function finishBattle(): void {
+function finishBattle(opts: { leave?: boolean } = {}): void {
   const ctx = battleCtx;
   if (!ctx || !state.winner || ctx.sandbox) return;
+  hideEndBanner();
   const report = applyBattleResult(world.roster, state, world);
   ensureStores(world).stash.push(...report.dropped);
   if (state.winner === 'player') {
@@ -873,7 +972,14 @@ function finishBattle(): void {
   checkGameOver(report.outcome);
   completeNight();
   const spoils = collectSpoils(state);
-  if (over || (spoils.loot.length === 0 && spoils.prisoners.length === 0 && spoils.killed === 0)) {
+  if (opts.leave && !over) {
+    // Walk away from it: the loot stays where it lies and anyone out cold is let go.
+    for (const note of resolveSpoils(world, spoils, { take: [], fates: {} }, world)) worldLog(note);
+    enterWorld();
+    return;
+  }
+  if (over || (spoils.loot.length === 0 && spoils.prisoners.length === 0)) {
+    if (!over) resolveSpoils(world, spoils, { take: [], fates: {} }, world); // still counts the rivals who died
     enterWorld();
     return;
   }
@@ -910,7 +1016,7 @@ function randomEncounter(region: Region): void {
     difficulty: d,
   });
   worldLog(`Ambush in ${region.name}!`);
-  beginBattle(scenario, { label: `Ambush in ${region.name}`, site: null, reward: d * 2, sandbox: false });
+  beginBattle(scenario, { label: `Ambush in ${region.name}`, site: null, reward: d * 2, sandbox: false, banner: 'Ambush' });
 }
 
 function hashStr(s: string): number {
@@ -952,7 +1058,7 @@ function openCamp(safe: boolean): void {
         const d = Math.max(1, danger);
         beginBattle(
           encounterScenario({ seed: Math.floor(rand(world) * 0x7fffffff), biome: region.biome, pods: 1, podSize: d >= 3 ? 3 : 2, difficulty: d, ambush: true }),
-          { label: `Night ambush in ${region.name}`, site: null, reward: d * 2, sandbox: false, ambush: true },
+          { label: `Night ambush in ${region.name}`, site: null, reward: d * 2, sandbox: false, ambush: true, banner: 'Ambush' },
         );
         return { ambush: true, notes: [] };
       }
@@ -1002,6 +1108,7 @@ function enterSite(site: Site | null): void {
     site,
     reward: site.reward ?? 0,
     sandbox: false,
+    banner: 'Assault',
   });
 }
 

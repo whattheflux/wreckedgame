@@ -71,6 +71,20 @@
       #log .enemy { color: #e07a6b; }
       #log .player { color: #7ec4e8; }
       #log .sys { color: #8a9aa8; }
+      #banner { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; pointer-events: none; text-align: center; padding: 16px; }
+      #banner[hidden] { display: none; }
+      #banner .word { font-size: clamp(40px, 9vw, 96px); font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; text-indent: 0.18em; text-shadow: 0 3px 18px rgba(0, 0, 0, 0.85); }
+      #banner .subtitle { font-size: 15px; opacity: 0.85; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9); }
+      #banner.start { background: linear-gradient(90deg, transparent, rgba(8, 13, 18, 0.72) 25%, rgba(8, 13, 18, 0.72) 75%, transparent); animation: bannerIn 2.2s ease forwards; }
+      #banner.start .word { color: #e8b04a; }
+      @keyframes bannerIn { 0% { opacity: 0; transform: scale(1.15); } 12% { opacity: 1; transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; } }
+      #banner.end { background: rgba(8, 13, 18, 0.78); pointer-events: auto; }
+      #banner.win .word { color: #8fe0a0; }
+      #banner.loss .word { color: #e0674e; }
+      #banner .choices { display: flex; gap: 10px; margin-top: 14px; }
+      #banner .choices button { font-size: 15px; padding: 9px 20px; }
+      #banner .choices button.primary { background: #2b5a3a; border-color: #4a8a5c; }
+      @media (prefers-reduced-motion: reduce) { #banner.start { animation: none; } }
       #overlay { position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; background: rgba(8, 13, 18, 0.92); padding: 24px 16px; box-sizing: border-box; }
       #overlay[hidden] { display: none; }
       #overlay .card { width: 100%; max-width: 640px; margin: auto 0; }
@@ -141,7 +155,7 @@
   <body>
     <div id="app">
       <div id="roster" hidden></div>
-      <div id="stage"><div id="viewport"><canvas id="board" hidden></canvas><canvas id="world"></canvas><div id="camctl" hidden><button data-cam="ccw" title="Rotate view left ([)">&#x27F2;</button><button data-cam="cw" title="Rotate view right (])">&#x27F3;</button><button data-cam="out" title="Zoom out (- or wheel)">&minus;</button><button data-cam="in" title="Zoom in (+ or wheel)">+</button><button data-cam="fit" title="Whole map / follow (Z)">&#x2922;</button></div></div><div id="bar" hidden><div id="hands"></div><div id="barbtns"></div><div></div></div><div id="tip" hidden></div><div id="overlay" hidden></div></div>
+      <div id="stage"><div id="viewport"><canvas id="board" hidden></canvas><canvas id="world"></canvas><div id="banner" hidden></div><div id="camctl" hidden><button data-cam="ccw" title="Rotate view left ([)">&#x27F2;</button><button data-cam="cw" title="Rotate view right (])">&#x27F3;</button><button data-cam="out" title="Zoom out (- or wheel)">&minus;</button><button data-cam="in" title="Zoom in (+ or wheel)">+</button><button data-cam="fit" title="Whole map / follow (Z)">&#x2922;</button></div></div><div id="bar" hidden><div id="hands"></div><div id="barbtns"></div><div></div></div><div id="tip" hidden></div><div id="overlay" hidden></div></div>
       <div id="side">
         <div id="panel"></div>
         <div id="actions"></div>
