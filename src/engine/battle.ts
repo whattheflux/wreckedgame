@@ -277,6 +277,7 @@ export function shoot(state: GameState, id: string, targetId: string): ActionRes
 
   const wasDormant = target.dormant;
   attacker.ap -= 1;
+  if (attacker.weapon.heavy) attacker.ap = 0; // a heavy weapon takes the whole turn: no moving or second attack after it
   attacker.ammo -= 1;
   attacker.attacked = true;
   attacker.idleTurns = 0;

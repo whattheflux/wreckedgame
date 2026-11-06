@@ -3,10 +3,10 @@ import type { Scenario, UnitSpec } from './battle';
 import { randInt } from './rng';
 
 export const WEAPONS = {
-  slingshot: { name: 'Slingshot', damage: [2, 4], range: 9, optimal: 6, aimMod: 0, critMod: 5, clip: 6 },
-  javelin: { name: 'Javelin', damage: [4, 6], range: 5, optimal: 3, aimMod: 5, critMod: 10, clip: 2 },
-  flareGun: { name: 'Flare Gun', damage: [5, 8], range: 8, optimal: 5, aimMod: -5, critMod: 0, clip: 2 },
-  pole: { name: 'Sharpened Pole', damage: [3, 5], range: 2.5, optimal: 1.5, aimMod: 10, critMod: 10, clip: 4 },
+  slingshot: { name: 'Slingshot', damage: [2, 4], range: 9, optimal: 6, aimMod: 0, critMod: 5, clip: 6, hands: 1, heavy: false },
+  javelin: { name: 'Javelin', damage: [4, 6], range: 5, optimal: 3, aimMod: 5, critMod: 10, clip: 2, hands: 2, heavy: true },
+  flareGun: { name: 'Flare Gun', damage: [5, 8], range: 8, optimal: 5, aimMod: -5, critMod: 0, clip: 2, hands: 1, heavy: false },
+  pole: { name: 'Sharpened Pole', damage: [3, 5], range: 2.5, optimal: 1.5, aimMod: 10, critMod: 10, clip: 4, hands: 2, heavy: true },
 } satisfies Record<string, Weapon>;
 
 type Edit = (

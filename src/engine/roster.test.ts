@@ -599,7 +599,7 @@ describe('knock-down and revive (engine)', () => {
       [
         unit({ id: 'pc', team: 'player', pos: { x: 1, y: 1 }, hp: 1, maxHp: 10, protagonist: true }),
         unit({ id: 'ally', team: 'player', pos: { x: 2, y: 2 } }),
-        unit({ id: 'foe', team: 'enemy', pos: { x: 5, y: 1 }, aim: 500, weapon: { name: 'T', damage: [3, 3], range: 12, optimal: 12, aimMod: 0, critMod: 0, clip: 6 } }),
+        unit({ id: 'foe', team: 'enemy', pos: { x: 5, y: 1 }, aim: 500, weapon: { name: 'T', damage: [3, 3], range: 12, optimal: 12, aimMod: 0, critMod: 0, clip: 6, hands: 1, heavy: false } }),
       ],
       seed,
     );

@@ -34,7 +34,7 @@ function runEnemyTurn(s: GameState): BattleEvent[] {
   return all;
 }
 
-const shortGun = { name: 'Short', damage: [3, 3] as [number, number], range: 3, optimal: 3, aimMod: 0, critMod: 0, clip: 6 };
+const shortGun = { name: 'Short', damage: [3, 3] as [number, number], range: 3, optimal: 3, aimMod: 0, critMod: 0, clip: 6, hands: 1 as const, heavy: false };
 
 describe('enemy AI behaviour', () => {
   it('shoots when it has a shot instead of wandering', () => {

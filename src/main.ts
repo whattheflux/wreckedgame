@@ -27,6 +27,7 @@ import {
   reviveUnit,
   setOverwatch,
   shoot,
+  skillsOf,
   unitAt,
   visibleTiles,
   type ActionResult,
@@ -42,6 +43,7 @@ import {
 } from './engine';
 import { rand } from './engine/rng';
 import { esc, hideOverlay, overlayOpen, showCreate, showPrep, showTitle } from './ui/screens';
+import { attackTip, handsHtml, moveTip, skillTip, tipHtml, type Tip } from './ui/actionbar';
 import { clearSave, loadGame, saveGame } from './world/save';
 import { BoardRenderer, type ViewState } from './render/board';
 import { koUrl, preloadArt, spriteUrl } from './render/sprites';
@@ -65,6 +67,10 @@ const panel = document.getElementById('panel') as HTMLDivElement;
 const actions = document.getElementById('actions') as HTMLDivElement;
 const logEl = document.getElementById('log') as HTMLDivElement;
 const camctl = document.getElementById('camctl') as HTMLDivElement;
+const barEl = document.getElementById('bar') as HTMLDivElement;
+const handsEl = document.getElementById('hands') as HTMLDivElement;
+const barBtnsEl = document.getElementById('barbtns') as HTMLDivElement;
+const tipEl = document.getElementById('tip') as HTMLDivElement;
 const rosterEl = document.getElementById('roster') as HTMLDivElement;
 const renderer = new BoardRenderer(canvas);
 // The squad's art is tiny next to a battle's worth of rivals: have it ready before the first fight.
@@ -285,15 +291,29 @@ interface Btn {
   run: () => void;
   enabled: (s: Unit | undefined) => boolean;
   active?: () => boolean;
+  /** Shown in the action bar under the map ('main' = Move / Basic Attack, 'skill' = one per skill) instead of the side panel. */
+  bar?: 'main' | 'skill';
+  /** Bar caption (the label without its key hint). */
+  name?: string;
+  /** For 'skill' buttons: the skill id; the button only works for units that have the skill. */
+  skillId?: string;
+  /** Hover text for bar buttons. */
+  tip?: (s: Unit | undefined) => Tip;
 }
 
 let currentButtons: Btn[] = [];
-let buttonEls: HTMLButtonElement[] = [];
+let buttonEls: Array<HTMLButtonElement | null> = [];
+
+/** Whether the button can be used right now, skill ownership included. */
+const usable = (b: Btn, s: Unit | undefined): boolean =>
+  (!b.skillId || skillsOf(s).some((k) => k.id === b.skillId)) && b.enabled(s);
 
 function setButtons(list: Btn[]): void {
   currentButtons = list;
   actions.innerHTML = '';
+  barSig = '';
   buttonEls = list.map((b) => {
+    if (b.bar) return null; // lives in the action bar
     const el = document.createElement('button');
     el.textContent = b.label;
     el.addEventListener('click', b.run);
@@ -304,17 +324,86 @@ function setButtons(list: Btn[]): void {
 
 function renderActions(sel: Unit | undefined): void {
   currentButtons.forEach((b, i) => {
-    buttonEls[i].disabled = !b.enabled(sel);
-    buttonEls[i].classList.toggle('active', b.active?.() ?? false);
+    const el = buttonEls[i];
+    if (!el) return;
+    el.disabled = !usable(b, sel);
+    el.classList.toggle('active', b.active?.() ?? false);
   });
+  if (mode === 'battle') renderBar(sel);
+}
+
+// ---------- action bar: weapon in hand, Move, Basic Attack, then one button per skill ----------
+
+let barSig = '';
+let barShown: Array<{ b: Btn; el: HTMLButtonElement }> = [];
+
+function renderBar(sel: Unit | undefined): void {
+  const skills = skillsOf(sel);
+  const sig = `${sel?.id ?? ''}|${sel?.weapon.name ?? ''}|${skills.map((k) => k.id).join(',')}`;
+  if (sig !== barSig) {
+    barSig = sig;
+    handsEl.innerHTML = sel ? handsHtml(sel.weapon) : '';
+    barBtnsEl.innerHTML = '';
+    const shown = [
+      ...currentButtons.filter((b) => b.bar === 'main'),
+      ...skills.flatMap((k) => currentButtons.filter((b) => b.bar === 'skill' && b.skillId === k.id)),
+    ];
+    barShown = shown.map((b) => {
+      const el = document.createElement('button');
+      el.className = `abtn ${b.bar === 'main' ? 'main' : 'skill'}`;
+      el.innerHTML = `<span>${esc(b.name ?? b.label)}</span><kbd>${esc(b.key.toUpperCase())}</kbd>`;
+      el.addEventListener('click', () => {
+        if (usable(b, selected())) b.run();
+      });
+      barBtnsEl.appendChild(el);
+      return { b, el };
+    });
+  }
+  // aria-disabled rather than disabled: a greyed-out button should still explain itself on hover
+  for (const { b, el } of barShown) {
+    const ok = usable(b, sel);
+    el.classList.toggle('off', !ok);
+    el.setAttribute('aria-disabled', String(!ok));
+    el.classList.toggle('active', b.active?.() ?? false);
+  }
+}
+
+barBtnsEl.addEventListener('mouseover', (e) => {
+  const el = (e.target as HTMLElement).closest<HTMLElement>('.abtn');
+  const hit = barShown.find((x) => x.el === el);
+  if (!el || !hit?.b.tip) return;
+  tipEl.innerHTML = tipHtml(hit.b.tip(selected()));
+  tipEl.hidden = false;
+  const stage = tipEl.parentElement as HTMLElement;
+  const sr = stage.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  const half = tipEl.offsetWidth / 2;
+  const cx = Math.min(Math.max(r.left + r.width / 2 - sr.left, half + 6), sr.width - half - 6);
+  tipEl.style.left = `${cx}px`;
+  tipEl.style.bottom = `${sr.bottom - r.top + 8}px`;
+});
+barBtnsEl.addEventListener('mouseout', (e) => {
+  if (!(e.relatedTarget as HTMLElement | null)?.closest?.('.abtn')) tipEl.hidden = true;
+});
+
+/** Hover text for a skill button, with why it is greyed out when it is. */
+function skillTipFor(id: string): (s: Unit | undefined) => Tip {
+  return (s) => {
+    const k = skillsOf(s).find((x) => x.id === id);
+    const t = k ? skillTip(k) : { title: id, cost: '', lines: [] };
+    if (s && id === 'reload' && s.ammo >= s.weapon.clip) t.lines.push('Already full.');
+    if (s && id === 'revive' && revivableBy(state, s).length === 0) t.lines.push('Nobody is down next to you.');
+    if (s && id === 'overwatch' && s.ammo <= 0) t.lines.push('Out of ammo: reload first.');
+    return t;
+  };
 }
 
 const battleButtons: Btn[] = [
-  { label: 'Move (M)', key: 'm', run: () => setAimMode('move'), enabled: (s) => canAct() && !!s && s.ap > 0, active: () => view.mode === 'move' },
-  { label: 'Fire (F)', key: 'f', run: () => setAimMode('shoot'), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0, active: () => view.mode === 'shoot' },
-  { label: 'Overwatch (O)', key: 'o', run: () => act(setOverwatch(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0 },
-  { label: 'Revive (V)', key: 'v', run: () => reviveAdjacent(), enabled: (s) => canAct() && !!s && s.ap > 0 && revivableBy(state, s).length > 0 },
-  { label: 'Reload (R)', key: 'r', run: () => act(reload(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo < s.weapon.clip },
+  { label: 'Move (M)', name: 'Move', bar: 'main', tip: moveTip, key: 'm', run: () => setAimMode('move'), enabled: (s) => canAct() && !!s && s.ap > 0, active: () => view.mode === 'move' },
+  { label: 'Basic Attack (F)', name: 'Basic Attack', bar: 'main', tip: attackTip, key: 'f', run: () => setAimMode('shoot'), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0, active: () => view.mode === 'shoot' },
+  { label: 'Overwatch (O)', name: 'Overwatch', bar: 'skill', skillId: 'overwatch', tip: skillTipFor('overwatch'), key: 'o', run: () => act(setOverwatch(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0 },
+  { label: 'Revive (V)', name: 'Revive', bar: 'skill', skillId: 'revive', tip: skillTipFor('revive'), key: 'v', run: () => reviveAdjacent(), enabled: (s) => canAct() && !!s && s.ap > 0 && revivableBy(state, s).length > 0 },
+  { label: 'Reload (R)', name: 'Reload', bar: 'skill', skillId: 'reload', tip: skillTipFor('reload'), key: 'r', run: () => act(reload(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo < s.weapon.clip },
   { label: 'End turn (E)', key: 'e', run: () => startEnemyPhase(), enabled: () => canAct() },
   { label: 'Continue (Enter)', key: 'enter', run: () => finishBattle(), enabled: () => !!state.winner && !busy && !battleCtx?.sandbox },
   { label: 'Retreat (W)', key: 'w', run: () => retreat(), enabled: () => !busy && (!state.winner || !!battleCtx?.sandbox) },
@@ -421,8 +510,8 @@ function renderPanel(sel: Unit | undefined): void {
   }
 
   lines.push(
-    `<div style="margin-top:10px;opacity:.55;font-size:11px">Click tile: move &middot; click enemy: shoot<br>` +
-      `M move &middot; F fire &middot; O overwatch &middot; V revive &middot; R reload &middot; E end turn &middot; Tab next &middot; W retreat</div>`,
+    `<div style="margin-top:10px;opacity:.55;font-size:11px">Click tile: move &middot; click enemy: attack<br>` +
+      `M move &middot; F attack &middot; O overwatch &middot; V revive &middot; R reload &middot; E end turn &middot; Tab next &middot; W retreat</div>`,
   );
   panel.innerHTML = lines.join('');
 }
@@ -566,6 +655,7 @@ function beginBattle(scenario: Scenario, ctx: BattleCtx): void {
   squadSig = '';
   rosterEl.hidden = false;
   camctl.hidden = false;
+  barEl.hidden = false;
   focusSelected(true);
   toast(ctx.label);
   refresh();
@@ -617,6 +707,8 @@ function enterWorld(): void {
   worldCanvas.hidden = false;
   rosterEl.hidden = true;
   camctl.hidden = true;
+  barEl.hidden = true;
+  tipEl.hidden = true;
   logEl.innerHTML = '';
   for (const t of world.log.slice(-40)) appendWorldLog(t);
   setButtons(over ? gameOverButtons : worldButtons);
@@ -906,7 +998,7 @@ window.addEventListener('keydown', (e) => {
     }
   }
   const b = currentButtons.find((x) => x.key === k);
-  if (b && b.enabled(selected())) b.run();
+  if (b && usable(b, selected())) b.run();
 });
 
 // ---------- new game / load / boot ----------

@@ -201,6 +201,60 @@ describe('movement and AP', () => {
     expect(shoot(s, 'a', 'e').ok).toBe(false);
   });
 
+  it('a light weapon costs 1 AP: move after it, or fire twice without moving', () => {
+    const light = { ...WEAPONS.slingshot, range: 20, optimal: 20 };
+    expect(light.heavy).toBe(false);
+    const a = unit({ id: 'a', team: 'player', pos: { x: 0, y: 0 }, aim: 200, weapon: light });
+    const e = unit({ id: 'e', team: 'enemy', pos: { x: 4, y: 0 }, hp: 100, maxHp: 100 });
+    const s = arena(open(8, 2), [a, e]);
+    expect(shoot(s, 'a', 'e').ok).toBe(true);
+    expect(a.ap).toBe(1);
+    expect(moveUnit(s, 'a', { x: 0, y: 1 }).ok).toBe(true); // 1 AP left: it can still walk
+    expect(a.ap).toBe(0);
+
+    const b = unit({ id: 'b', team: 'player', pos: { x: 0, y: 0 }, aim: 200, weapon: light });
+    const s2 = arena(open(8, 2), [b, { ...e }]);
+    expect(shoot(s2, 'b', 'e').ok).toBe(true);
+    expect(shoot(s2, 'b', 'e').ok).toBe(true); // or fire again instead
+    expect(b.ap).toBe(0);
+  });
+
+  it('a heavy weapon spends the whole turn: nothing after the attack', () => {
+    const heavy = { ...WEAPONS.javelin, range: 20, optimal: 20 };
+    expect(heavy.heavy).toBe(true);
+    expect(heavy.hands).toBe(2);
+    const a = unit({ id: 'a', team: 'player', pos: { x: 0, y: 0 }, aim: 200, weapon: heavy, ammo: 2 });
+    const e = unit({ id: 'e', team: 'enemy', pos: { x: 4, y: 0 }, hp: 100, maxHp: 100 });
+    const s = arena(open(8, 2), [a, e]);
+    expect(shoot(s, 'a', 'e').ok).toBe(true);
+    expect(a.ap).toBe(0);
+    expect(a.ammo).toBe(1);
+    expect(shoot(s, 'a', 'e').ok).toBe(false); // no second throw
+    expect(moveUnit(s, 'a', { x: 0, y: 1 }).ok).toBe(false); // and no walking away
+  });
+
+  it('moving first and then attacking with a heavy weapon is still allowed (1 AP + 1 AP)', () => {
+    const heavy = { ...WEAPONS.pole, range: 20, optimal: 20 };
+    const a = unit({ id: 'a', team: 'player', pos: { x: 0, y: 0 }, aim: 200, weapon: heavy });
+    const e = unit({ id: 'e', team: 'enemy', pos: { x: 4, y: 0 }, hp: 100, maxHp: 100 });
+    const s = arena(open(8, 2), [a, e]);
+    expect(moveUnit(s, 'a', { x: 1, y: 0 }).ok).toBe(true);
+    expect(a.ap).toBe(1);
+    expect(shoot(s, 'a', 'e').ok).toBe(true);
+    expect(a.ap).toBe(0);
+  });
+
+  it('the same rule binds rivals, and the enemy phase still hands the turn back', () => {
+    const p = unit({ id: 'p', team: 'player', pos: { x: 0, y: 1 }, hp: 100, maxHp: 100 });
+    const e = unit({ id: 'e', team: 'enemy', pos: { x: 4, y: 1 }, weapon: { ...WEAPONS.javelin, range: 20, optimal: 20 }, ap: 2, aim: 500 });
+    const s = arena(open(12, 3), [p, e]);
+    s.active = 'enemy';
+    const ev = enemyStep(s);
+    expect(ev!.some((x) => x.type === 'shoot' && x.attackerId === 'e')).toBe(true);
+    expect(e.ap).toBe(0);
+    expect(enemyStep(s)).toBeNull();
+  });
+
   it('only lets the active team act', () => {
     const a = unit({ id: 'a', team: 'player' });
     const e = unit({ id: 'e', team: 'enemy', pos: { x: 2, y: 0 } });

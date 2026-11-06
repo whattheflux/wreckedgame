@@ -31,7 +31,7 @@ npm run build    # typecheck + production build
 | Click your unit / `1`-`9` / `Tab` | Select |
 | Click blue tile | Move (1 AP) |
 | Click yellow tile | Dash (2 AP) |
-| Click enemy | Shoot (1 AP, 1 ammo) |
+| `F` / Basic Attack button, then click an enemy | Attack with the weapon in hand (1 AP, 1 ammo; a heavy weapon ends the turn, see below) |
 | `O` | Overwatch (uses remaining AP; reaction shot at -15 aim on the first enemy that moves into sight) |
 | `V` | Revive a knocked-down ally standing next to the selected unit (1 AP); clicking the downed unit does the same |
 | `R` | Reload (1 AP) |
@@ -43,6 +43,9 @@ npm run build    # typecheck + production build
 ## Combat rules
 
 - 2 AP per unit per turn. Moving up to `mobility` tiles costs 1 AP, up to double costs 2 (dash).
+- **Light weapons** (slingshot, flare gun) cost 1 AP to attack: move afterwards, or attack twice if you don't move.
+- **Heavy weapons** (javelin, sharpened pole) are two-handed. An attack costs 1 AP *and ends the turn* (hover Basic Attack to see "1 AP (ends turn)"); move first if you need to, there is no moving or attacking again afterwards. Rivals follow the same rule.
+- The action bar under the map shows the selected unit's weapon in hand (two-handers fill both hands, the left one faded; one-handers leave the left hand bare), then Move, Basic Attack and a button for each skill the unit has. Overwatch, Reload and Revive are the base skills everyone has; clique and class skills will join them.
 - Cover is directional: a half/full cover object only counts if it sits between the target and the attacker. Half = -20 hit, full = -40.
 - A target hugging cover but shot from an uncovered side is **flanked**: the cover penalty is gone and any hit is a guaranteed crit (+50% damage). Range falloff still applies, so a long flank shot can miss; if it lands, it crits. The same goes for the enemy flanking you. A target in the open (no cover at all) is **exposed**: not a guaranteed crit, but +15% crit chance (`EXPOSED_CRIT_BONUS`).
 - Squad bar: the left side shows each squad member's face, name, HP and AP; click one, press 1-9, or Tab / Shift+Tab to select them and the camera eases onto them (Z toggles zoomed-in and whole-map view). Camera: mouse wheel zooms toward the cursor, +/- zoom, [ and ] rotate the view in quarter turns (buttons top-right of the board do the same); units stay upright and turn to match.

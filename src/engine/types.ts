@@ -29,6 +29,10 @@ export interface Weapon {
   aimMod: number;
   critMod: number;
   clip: number;
+  /** hands needed to hold it; a two-hander fills both hand slots on the action bar */
+  hands: 1 | 2;
+  /** attacking with it ends the unit's turn (its remaining AP is spent); a light weapon costs just its 1 AP */
+  heavy: boolean;
 }
 
 export interface Unit {

@@ -14,7 +14,7 @@ export function unit(over: Partial<Unit> & Pick<Unit, 'id' | 'team'>): Unit {
     aim: 70,
     defense: 0,
     critChance: 0,
-    weapon: { name: 'Test', damage: [3, 3], range: 12, optimal: 12, aimMod: 0, critMod: 0, clip: 6 },
+    weapon: { name: 'Test', damage: [3, 3], range: 12, optimal: 12, aimMod: 0, critMod: 0, clip: 6, hands: 1, heavy: false },
     ammo: 6,
     overwatch: false,
     alive: true,
