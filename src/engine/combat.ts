@@ -1,7 +1,9 @@
 import type { BattleEvent, CoverType, GameMap, GameState, Pos, Unit } from './types';
 import { coverAgainst, dist, hasLineOfSight, isFlanked } from './grid';
 import { rand, randInt } from './rng';
-import { onFall } from './loot';
+import { breakWeapon, knockDown } from './loot';
+import { STATUSES, addStatus, statusMods } from './status';
+import type { StatusId } from './types';
 
 export const COVER_PENALTY: Record<CoverType, number> = { none: 0, half: 20, full: 40 };
 export const OVERWATCH_PENALTY = 15;
@@ -11,7 +13,7 @@ export const FLANK_CRIT_CHANCE = 100;
 export const EXPOSED_CRIT_BONUS = 15;
 export const RANGE_PENALTY_PER_TILE = 4;
 
-export type Shooter = Pick<Unit, 'aim' | 'critChance' | 'weapon'>;
+export type Shooter = Pick<Unit, 'aim' | 'critChance' | 'weapon'> & Partial<Pick<Unit, 'status'>>;
 export type Targetable = Pick<Unit, 'defense' | 'pos' | 'hp'>;
 
 export interface ShotPreview {
@@ -29,6 +31,8 @@ export interface ShotPreview {
   /** the shooter's weapon range (max, and where accuracy starts to fall off), so a UI can explain 'out of range' */
   range: number;
   optimal: number;
+  /** a melee blow: adjacent only, cover and range falloff do not apply */
+  melee: boolean;
   /** the parts of the hit chance, for tooltips (all in points; penalties are positive) */
   rangePenalty: number;
   coverPenalty: number;
@@ -46,11 +50,15 @@ export function computeShot(
 ): ShotPreview {
   const w = shooter.weapon;
   const distance = dist(from, target.pos);
-  const cover = coverAgainst(map, from, target.pos);
-  const flanked = isFlanked(map, from, target.pos);
+  const melee = !!w.melee;
+  // a blow in the face: cover means nothing, there is no falloff, and nobody is flanked
+  const cover = melee ? 'none' : coverAgainst(map, from, target.pos);
+  const flanked = melee ? false : isFlanked(map, from, target.pos);
   const exposed = cover === 'none' && !flanked;
-  const rangePenalty = Math.max(0, distance - w.optimal) * RANGE_PENALTY_PER_TILE;
+  const rangePenalty = melee ? 0 : Math.max(0, distance - w.optimal) * RANGE_PENALTY_PER_TILE;
+  const mods = statusMods(shooter);
   const base = {
+    melee,
     cover,
     flanked,
     exposed,
@@ -66,11 +74,11 @@ export function computeShot(
   };
 
   if (distance > w.range) return { ...base, canShoot: false, reason: 'Out of range' };
-  if (!hasLineOfSight(map, from, target.pos)) return { ...base, canShoot: false, reason: 'No line of sight' };
+  if (!melee && !hasLineOfSight(map, from, target.pos)) return { ...base, canShoot: false, reason: 'No line of sight' };
 
   const hit =
-    shooter.aim + w.aimMod - target.defense - COVER_PENALTY[cover] - rangePenalty - (overwatch ? OVERWATCH_PENALTY : 0);
-  const crit = flanked ? FLANK_CRIT_CHANCE : shooter.critChance + w.critMod + (exposed ? EXPOSED_CRIT_BONUS : 0);
+    shooter.aim + mods.aim + w.aimMod - target.defense - COVER_PENALTY[cover] - rangePenalty - (overwatch ? OVERWATCH_PENALTY : 0);
+  const crit = flanked ? FLANK_CRIT_CHANCE : shooter.critChance + mods.crit + w.critMod + (melee ? 0 : exposed ? EXPOSED_CRIT_BONUS : 0);
 
   return {
     ...base,
@@ -87,6 +95,7 @@ export function resolveShot(
   target: Unit,
   preview: ShotPreview,
   overwatch: boolean,
+  opportunity = false,
 ): BattleEvent {
   const hit = rand(state) * 100 < preview.hitChance;
   let crit = false;
@@ -94,6 +103,7 @@ export function resolveShot(
   let killed = false;
   let wentDown = false;
   let fate: 'dead' | 'unconscious' | undefined;
+  const inflicted: StatusId[] = [];
 
   if (hit) {
     crit = rand(state) * 100 < preview.critChance;
@@ -102,22 +112,27 @@ export function resolveShot(
     target.hp = Math.max(0, target.hp - damage);
     attacker.hits = (attacker.hits ?? 0) + 1;
     if (target.hp === 0) {
-      target.alive = false;
-      target.overwatch = false;
       killed = true;
-      if (target.protagonist && (target.downs ?? 0) === 0) {
-        // The player character's first fall in a battle is a knock-down, not a death: an ally can revive them.
-        target.downs = 1;
+      const r = knockDown(state, target, attacker, { crit, damage, heavy: attacker.weapon.heavy });
+      if (r === 'downed') {
         target.downed = true;
         wentDown = true;
-      } else {
-        attacker.kills = (attacker.kills ?? 0) + 1;
-        fate = onFall(state, target, { crit, damage, heavy: attacker.weapon.heavy });
+      } else fate = r;
+    } else {
+      for (const inf of attacker.weapon.inflicts ?? []) {
+        if (rand(state) < inf.chance) {
+          addStatus(target, inf.effect, inf.turns);
+          inflicted.push(inf.effect);
+        }
       }
     }
   }
+  // fragile weapons give out; rolled only for weapons that can (so old seeded fights are unchanged)
+  let broke = false;
+  const br = attacker.weapon.breakChance;
+  if (br && attacker.alive !== false && rand(state) < br) broke = true;
 
-  const prefix = overwatch ? 'Overwatch: ' : '';
+  const prefix = overwatch ? 'Overwatch: ' : opportunity ? 'Parting blow: ' : '';
   const fall = wentDown
     ? ` - ${target.name} is DOWN, needs a revive!`
     : fate === 'unconscious'
@@ -125,12 +140,15 @@ export function resolveShot(
       : fate === 'dead' && target.team === 'enemy'
         ? ' - killed!'
         : ' - down!';
-  const outcome = hit ? `${crit ? 'CRIT ' : ''}${damage} dmg${killed ? fall : ''}` : 'miss';
+  const names = inflicted.map((i) => STATUSES[i].name.toLowerCase());
+  const outcome = hit ? `${crit ? 'CRIT ' : ''}${damage} dmg${killed ? fall : ''}${names.length ? ` (${names.join(', ')})` : ''}` : 'miss';
   state.log.push({
     team: attacker.team,
     text: `${prefix}${attacker.name} (${attacker.weapon.name}) -> ${target.name}: ${outcome} [${preview.hitChance}%]`,
     at: [{ ...attacker.pos }, { ...target.pos }],
   });
+  const weaponName = attacker.weapon.name;
+  if (broke) breakWeapon(state, attacker);
 
   return {
     type: 'shoot',
@@ -144,5 +162,8 @@ export function resolveShot(
     ...(fate && target.team === 'enemy' ? { fate } : {}),
     overwatch,
     hitChance: preview.hitChance,
+    ...(opportunity ? { opportunity: true } : {}),
+    ...(broke ? { broke: true, weaponName } : {}),
+    ...(inflicted.length ? { inflicted } : {}),
   };
 }

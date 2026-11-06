@@ -12,3 +12,4 @@ export * from './roster';
 export * from './skills';
 export * from './items';
 export * from './loot';
+export * from './status';

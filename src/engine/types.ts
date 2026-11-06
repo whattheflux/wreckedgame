@@ -21,6 +21,24 @@ export interface GameMap {
   biome?: Biome;
 }
 
+/** Conditions a hit can leave on someone. Defined in status.ts. */
+export type StatusId = 'stun' | 'bleed' | 'poison' | 'burn' | 'shaken' | 'scared' | 'blind' | 'silenced';
+
+export interface Status {
+  id: StatusId;
+  /** own turns left; it ticks at the start of its owner's turn */
+  turns: number;
+}
+
+/** A chance for a hit to leave a status behind. */
+export interface Inflict {
+  effect: StatusId;
+  /** 0-1, rolled on every hit that leaves the target standing */
+  chance: number;
+  /** how long it lasts; defaults to the status's own length */
+  turns?: number;
+}
+
 export interface Weapon {
   name: string;
   damage: [number, number];
@@ -35,6 +53,14 @@ export interface Weapon {
   hands: 1 | 2;
   /** attacking with it ends the unit's turn (its remaining AP is spent); a light weapon costs just its 1 AP */
   heavy: boolean;
+  /** adjacent targets only: cover does not help against it, there is no range falloff, and it never runs out of ammo */
+  melee?: boolean;
+  /** 0 = scraps and sticks, 1 = proper hand-made weapons, 2 = crude but deadly; shown on the item */
+  tier?: number;
+  /** chance (0-1) the weapon breaks on every attack. Cheap weapons are fragile. */
+  breakChance?: number;
+  /** what a hit can do besides damage */
+  inflicts?: Inflict[];
 }
 
 export interface Unit {
@@ -77,6 +103,8 @@ export interface Unit {
   sprite?: string;
   /** what the unit wears and carries (slot -> item id); the hand slots decide `weapon`, the worn slots its stats */
   gear?: Gear;
+  /** conditions on this unit (absent when it has none) */
+  status?: Status[];
   /** how a non-leader fell: killed outright, or knocked out cold (still there at the end of a won fight, to be dealt with) */
   fate?: 'dead' | 'unconscious';
 }
@@ -93,6 +121,13 @@ export type BattleEvent =
       killed: boolean;
       /** the target was knocked down rather than killed (so `killed` is true but they can be revived) */
       downed?: boolean;
+      /** a free hit as the target walked out of reach */
+      opportunity?: boolean;
+      /** the attacker's weapon broke on this attack */
+      broke?: boolean;
+      weaponName?: string;
+      /** conditions this hit left on the target */
+      inflicted?: StatusId[];
       /** a rival went down: killed or knocked out */
       fate?: 'dead' | 'unconscious';
       overwatch: boolean;
@@ -102,6 +137,7 @@ export type BattleEvent =
   | { type: 'overwatch'; unitId: string }
   | { type: 'reload'; unitId: string }
   | { type: 'gear'; unitId: string }
+  | { type: 'tick'; unitId: string; effect: StatusId; damage: number; fell?: boolean }
   | { type: 'reveal'; podId: string; unitIds: string[] }
   | { type: 'turn'; team: Team; turn: number }
   | { type: 'end'; winner: Team };

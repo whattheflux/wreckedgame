@@ -1,5 +1,5 @@
 import { rand } from './rng';
-import { ITEMS, gearMods, itemsIn, moveItem, quickMove, slotsOf, weaponOfGear, type Gear, type GearLoc, type ItemId } from './items';
+import { ITEMS, gearMods, itemsIn, moveItem, quickMove, slotsOf, weaponOfGear, weaponOfItem, type Gear, type GearLoc, type ItemId } from './items';
 import type { GameState, Pos, Unit } from './types';
 
 /**
@@ -76,6 +76,42 @@ export function onFall(state: GameState, victim: Unit, blow: { crit: boolean; da
   if (drops.length > 0) groundList(state, victim.pos).push(...drops);
   victim.gear = {};
   return fate;
+}
+
+/**
+ * Hit points hit zero: the one place a unit goes down, whether a blow or a condition did it. The leader's first fall in
+ * a battle is a knock-down an ally can revive; everyone else rolls death vs unconscious and drops what they carry.
+ * `attacker` is null when no one is to blame (bleeding, burning) and gets no kill.
+ */
+export function knockDown(
+  state: GameState,
+  target: Unit,
+  attacker: Unit | null,
+  blow: { crit: boolean; damage: number; heavy: boolean },
+): 'dead' | 'unconscious' | 'downed' {
+  target.alive = false;
+  target.overwatch = false;
+  delete target.status;
+  if (target.protagonist && (target.downs ?? 0) === 0) {
+    target.downs = 1;
+    target.downed = true;
+    return 'downed';
+  }
+  if (attacker) attacker.kills = (attacker.kills ?? 0) + 1;
+  return onFall(state, target, blow);
+}
+
+/** A weapon gives out: take it out of whichever hand held it. The unit falls back to what is in the other hand, or fists. */
+export function breakWeapon(state: GameState, u: Unit): void {
+  const g = u.gear ?? {};
+  const before: Gear = { ...g };
+  const slot = weaponOfItem(g.rightHand ?? '') ? 'rightHand' : weaponOfItem(g.leftHand ?? '') ? 'leftHand' : null;
+  if (!slot) return;
+  const name = u.weapon.name;
+  delete g[slot];
+  u.gear = g;
+  refreshFromGear(u, before);
+  state.log.push({ team: u.team, text: `${u.name}'s ${name.toLowerCase()} breaks!`, at: [{ ...u.pos }] });
 }
 
 // ---------- changing gear mid-battle ----------

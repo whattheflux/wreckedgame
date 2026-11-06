@@ -47,6 +47,9 @@ import {
   type PlayerChoice,
   type Pos,
   type RosterMember,
+  STATUSES,
+  canUseSkills,
+  statusLine,
   type Scenario,
   type Unit,
 } from './engine';
@@ -276,6 +279,11 @@ function playEffects(events: BattleEvent[]): number {
       if (t) renderer.addTextEffect(t.pos, 'BACK UP', '#6fcf7a', 1800);
       continue;
     }
+    if (ev.type === 'tick') {
+      const t = getUnit(state, ev.unitId);
+      if (t && seen(t.pos)) renderer.addTextEffect(t.pos, `-${ev.damage} ${STATUSES[ev.effect].name.toLowerCase()}`, STATUSES[ev.effect].color, 1600);
+      continue;
+    }
     if (ev.type !== 'shoot') continue;
     const a = getUnit(state, ev.attackerId);
     const t = getUnit(state, ev.targetId);
@@ -285,6 +293,9 @@ function playEffects(events: BattleEvent[]): number {
     const text = ev.hit ? `${ev.crit ? 'CRIT ' : ''}-${ev.damage}` : 'MISS';
     renderer.addShotEffect(a.pos, t.pos, ev.hit, text, ev.crit);
     if (ev.downed) renderer.addTextEffect(t.pos, 'DOWN!', '#e0674e', 2200);
+    if (ev.opportunity) renderer.addTextEffect(a.pos, 'PARTING BLOW', '#ffb347', 1400);
+    for (const i of ev.inflicted ?? []) renderer.addTextEffect(t.pos, STATUSES[i].name.toUpperCase() + '!', STATUSES[i].color, 1800);
+    if (ev.broke) renderer.addTextEffect(a.pos, `${ev.weaponName ?? 'WEAPON'} BREAKS!`.toUpperCase(), '#c9a27a', 2000);
   }
   return walkMs;
 }
@@ -492,7 +503,9 @@ function skillTipFor(id: string): (s: Unit | undefined) => Tip {
     const t = k ? skillTip(k) : { title: id, cost: '', lines: [] };
     if (s && id === 'reload' && s.ammo >= s.weapon.clip) t.lines.push('Already full.');
     if (s && id === 'revive' && revivableBy(state, s).length === 0) t.lines.push('Nobody is down next to you.');
-    if (s && id === 'overwatch' && s.ammo <= 0) t.lines.push('Out of ammo: reload first.');
+    if (s && id === 'overwatch' && s.weapon.melee) t.lines.push('Melee weapons cannot hold overwatch.');
+    else if (s && id === 'overwatch' && s.ammo <= 0) t.lines.push('Out of ammo: reload first.');
+    if (s && (id === 'overwatch' || id === 'revive') && !canUseSkills(s)) t.lines.push('Silenced: cannot do this right now.');
     return t;
   };
 }
@@ -600,9 +613,9 @@ function openWorldInventory(after?: () => void): void {
 
 const battleButtons: Btn[] = [
   { label: 'Move (M)', name: 'Move', bar: 'main', tip: moveTip, key: 'm', run: () => setAimMode('move'), enabled: (s) => canAct() && !!s && s.ap > 0, active: () => view.mode === 'move' },
-  { label: 'Basic Attack (F)', name: 'Basic Attack', bar: 'main', tip: attackTip, key: 'f', run: () => setAimMode('shoot'), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0, active: () => view.mode === 'shoot' },
-  { label: 'Overwatch (O)', name: 'Overwatch', bar: 'skill', skillId: 'overwatch', tip: skillTipFor('overwatch'), key: 'o', run: () => act(setOverwatch(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0 },
-  { label: 'Revive (V)', name: 'Revive', bar: 'skill', skillId: 'revive', tip: skillTipFor('revive'), key: 'v', run: () => reviveAdjacent(), enabled: (s) => canAct() && !!s && s.ap > 0 && revivableBy(state, s).length > 0 },
+  { label: 'Basic Attack (F)', name: 'Basic Attack', bar: 'main', tip: attackTip, key: 'f', run: () => setAimMode('shoot'), enabled: (s) => canAct() && !!s && s.ap > 0 && (!!s.weapon.melee || s.ammo > 0), active: () => view.mode === 'shoot' },
+  { label: 'Overwatch (O)', name: 'Overwatch', bar: 'skill', skillId: 'overwatch', tip: skillTipFor('overwatch'), key: 'o', run: () => act(setOverwatch(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo > 0 && !s.weapon.melee && canUseSkills(s) },
+  { label: 'Revive (V)', name: 'Revive', bar: 'skill', skillId: 'revive', tip: skillTipFor('revive'), key: 'v', run: () => reviveAdjacent(), enabled: (s) => canAct() && !!s && s.ap > 0 && canUseSkills(s) && revivableBy(state, s).length > 0 },
   { label: 'Reload (R)', name: 'Reload', bar: 'skill', skillId: 'reload', tip: skillTipFor('reload'), key: 'r', run: () => act(reload(state, view.selectedId ?? '')), enabled: (s) => canAct() && !!s && s.ap > 0 && s.ammo < s.weapon.clip },
   { label: 'Inventory (I)', name: 'Inventory', bar: 'main', tip: inventoryTip, key: 'i', run: () => openBattleInventory(), enabled: (s) => canAct() && !!s },
   { label: 'End turn (E)', key: 'e', run: () => startEnemyPhase(), enabled: () => canAct() },
@@ -690,8 +703,11 @@ function renderPanel(sel: Unit | undefined): void {
     const member = battleCtx && !battleCtx.sandbox && sel.team === 'player' ? world.roster.find((r) => r.id === sel.id) : undefined;
     lines.push(
       `<div style="margin-top:8px"><b>${esc(sel.name)}</b> <span style="opacity:.7">${sel.role}${member ? ` Lv ${member.level}` : ''}</span><br>` +
-        `HP ${sel.hp}/${sel.maxHp} &middot; AP ${sel.ap}/${sel.maxAp} &middot; Ammo ${sel.ammo}/${sel.weapon.clip}<br>` +
-        `${sel.weapon.name} ${sel.weapon.damage[0]}-${sel.weapon.damage[1]} dmg, range ${sel.weapon.range} (full accuracy to ${sel.weapon.optimal})<br>` +
+        `HP ${sel.hp}/${sel.maxHp} &middot; AP ${sel.ap}/${sel.maxAp}${sel.weapon.melee ? '' : ` &middot; Ammo ${sel.ammo}/${sel.weapon.clip}`}<br>` +
+        (sel.weapon.melee
+          ? `${sel.weapon.name} ${sel.weapon.damage[0]}-${sel.weapon.damage[1]} dmg, adjacent only<br>`
+          : `${sel.weapon.name} ${sel.weapon.damage[0]}-${sel.weapon.damage[1]} dmg, range ${sel.weapon.range} (full accuracy to ${sel.weapon.optimal})<br>`) +
+        (sel.status?.length ? `<span style="color:#f2d04a">${esc(statusLine(sel))}</span><br>` : '') +
         `Aim ${sel.aim} &middot; Def ${sel.defense} &middot; Move ${sel.mobility}/${sel.mobility * 2}` +
         (member ? memberTags(member) : '') +
         `</div>`,

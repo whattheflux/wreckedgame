@@ -48,12 +48,15 @@ const CLUSTER: Array<[number, number]> = [[0, 0], [1, 0], [0, 1], [1, 1], [-1, 0
 const MIN_POD_GAP = 6;
 
 function weaponFor(difficulty: number, i: number): Weapon {
+  const W = WEAPONS;
   const pool: Weapon[] =
-    difficulty >= 3
-      ? [WEAPONS.javelin, WEAPONS.flareGun, WEAPONS.slingshot, WEAPONS.pole]
-      : difficulty === 2
-        ? [WEAPONS.slingshot, WEAPONS.javelin, WEAPONS.pole]
-        : [WEAPONS.slingshot, WEAPONS.pole, WEAPONS.slingshot, WEAPONS.javelin];
+    difficulty >= 4
+      ? [W.javelin, W.crudeSword, W.flareGun, W.nailBat, W.machete, W.slingshot, W.poisonDagger, W.fireAxe]
+      : difficulty === 3
+        ? [W.javelin, W.flareGun, W.crudeSword, W.slingshot, W.weightedClub, W.pole, W.machete, W.torch]
+        : difficulty === 2
+          ? [W.slingshot, W.javelin, W.knife, W.pole, W.sharpStick, W.torch, W.weightedClub, W.sandSock]
+          : [W.slingshot, W.stick, W.fryingPan, W.slingshot, W.rollingPin, W.pipe, W.humanBone, W.javelin, W.knife];
   return pool[i % pool.length];
 }
 
@@ -140,7 +143,7 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
       n++;
       const weapon = weaponFor(diff, m + pi);
       const kid = crew.members[n - 1];
-      const spec = foe(`e${n}`, kid.name, pos.x, pos.y, podId, weapon, 7 + diff + (weapon === WEAPONS.pole ? 2 : 0), 52 + diff * 4);
+      const spec = foe(`e${n}`, kid.name, pos.x, pos.y, podId, weapon, 7 + diff + (weapon === WEAPONS.pole || weapon.melee ? 2 : 0), 52 + diff * 4);
       // What they carry rolls from its own stream so it never disturbs the map. Worn pieces make them harder to hurt.
       const weaponKey = (Object.keys(WEAPONS) as Array<keyof typeof WEAPONS>).find((k) => WEAPONS[k] === weapon) ?? 'slingshot';
       const gear = rivalGear(weaponKey, diff, { rngState: Math.imul(opts.seed | 0, 7919) + n });

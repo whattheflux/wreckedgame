@@ -1,4 +1,4 @@
-import { GEAR_SLOTS, ITEMS, SLOT_LABEL, isPackSlot, packCapacity, slotsOf, type Gear, type GearLoc, type ItemDef, type ItemId } from '../engine';
+import { GEAR_SLOTS, ITEMS, SLOT_LABEL, STATUSES, weaponOfItem, isPackSlot, packCapacity, slotsOf, type Gear, type GearLoc, type ItemDef, type ItemId } from '../engine';
 import type { Disposition, Prisoner, Spoils, SpoilsChoice } from '../world/spoils';
 import { previewUrl } from '../render/sprites';
 import { bareHandArt, itemArt } from './actionbar';
@@ -73,6 +73,12 @@ export function itemTip(id: ItemId): string {
     .filter(([, v]) => v)
     .map(([k, v]) => `${MOD_LABEL[k] ?? k} ${(v as number) > 0 ? '+' : ''}${v}`);
   const cap = d.capacity ? ` Holds ${d.capacity}.` : '';
+  const w = d.weapon ? weaponOfItem(id) : null;
+  if (w?.melee) {
+    const fx = (w.inflicts ?? []).map((i) => `${Math.round(i.chance * 100)}% ${STATUSES[i.effect].name.toLowerCase()}`);
+    const tier = ['scrap', 'hand-made', 'crude but deadly'][w.tier ?? 0];
+    return `${d.name} (${tier}; ${w.damage[0]}-${w.damage[1]} dmg${fx.length ? `; ${fx.join(', ')}` : ''}${w.breakChance ? `; ${Math.round(w.breakChance * 1000) / 10}% to break per swing` : ''}). ${d.desc}`;
+  }
   return `${d.name}${mods.length ? ` (${mods.join(', ')})` : ''}. ${d.desc}${cap}`;
 }
 

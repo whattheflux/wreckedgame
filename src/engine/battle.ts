@@ -1,8 +1,9 @@
 import type { BattleEvent, GameMap, GameState, Pos, Team, Unit, Weapon } from './types';
-import { pathTo, posKey, reachableTiles, type PathNode } from './grid';
+import { dist, pathTo, posKey, reachableTiles, type PathNode } from './grid';
 import { computeShot, resolveShot } from './combat';
 import { podsToWake, updateExplored } from './vision';
 import { coverValueVs, nearestUnit } from './tactics';
+import { canUseSkills, hasStatus, tickStatuses } from './status';
 import { gearForWeapon, type Gear } from './items';
 
 export interface UnitSpec {
@@ -110,7 +111,7 @@ export function reachableFor(state: GameState, u: Unit): Map<string, PathNode> {
   return reachableTiles(state.map, state.units, u, maxCost);
 }
 
-function startTurn(state: GameState, team: Team): void {
+function startTurn(state: GameState, team: Team): BattleEvent[] {
   for (const u of state.units) {
     if (u.team === team && u.alive) {
       u.ap = u.dormant ? 0 : u.maxAp; // dormant pods don't act until discovered
@@ -118,7 +119,9 @@ function startTurn(state: GameState, team: Team): void {
       u.attacked = false;
     }
   }
+  const ticks = tickStatuses(state, team);
   state.log.push({ team: 'sys', text: `--- Turn ${state.turn}: ${team === 'player' ? 'Your squad' : 'Rival faction'} ---` });
+  return ticks;
 }
 
 export function endTurn(state: GameState): BattleEvent[] {
@@ -128,8 +131,10 @@ export function endTurn(state: GameState): BattleEvent[] {
     state.turn += 1;
     state.turnsSinceContact += 1;
   }
-  startTurn(state, state.active);
-  return [{ type: 'turn', team: state.active, turn: state.turn }];
+  const ticks = startTurn(state, state.active);
+  const events: BattleEvent[] = [{ type: 'turn', team: state.active, turn: state.turn }, ...ticks];
+  checkWin(state, events);
+  return events;
 }
 
 export const playerTurnOver = (state: GameState): boolean => living(state, 'player').every((u) => u.ap <= 0);
@@ -180,11 +185,32 @@ interface WalkResult {
 }
 
 /** Step a unit along a path, taking overwatch fire, and (for the player) stopping the moment a pod is discovered. */
+/**
+ * Walking out of reach of someone with a melee weapon earns you a free swing from each of them as you go: they must be
+ * awake, standing, not stunned, and next to the tile you are leaving but not the one you are stepping to.
+ */
+function opportunityAttacks(state: GameState, mover: Unit, next: Pos): BattleEvent[] {
+  const events: BattleEvent[] = [];
+  const from = mover.pos;
+  for (const foe of state.units) {
+    if (!foe.alive || foe.team === mover.team || foe.dormant || !foe.weapon.melee || hasStatus(foe, 'stun')) continue;
+    const reach = foe.weapon.range;
+    if (dist(foe.pos, from) > reach || dist(foe.pos, next) <= reach) continue;
+    const pv = computeShot(state.map, foe, foe.pos, mover);
+    if (!pv.canShoot) continue;
+    events.push(resolveShot(state, foe, mover, pv, false, true));
+    if (!mover.alive) break;
+  }
+  return events;
+}
+
 function walk(state: GameState, unit: Unit, path: Pos[], detect: boolean): WalkResult {
   const traveled: Pos[] = [];
   const reactions: BattleEvent[] = [];
   let woke: string[] = [];
   for (const step of path) {
+    reactions.push(...opportunityAttacks(state, unit, step));
+    if (!unit.alive) break;
     unit.pos = { ...step };
     traveled.push(step);
     reactions.push(...triggerOverwatch(state, unit));
@@ -274,7 +300,7 @@ export function shoot(state: GameState, id: string, targetId: string): ActionRes
   const target = getUnit(state, targetId);
   if (!target || !target.alive) return fail('No such target');
   if (target.team === attacker.team) return fail('Cannot target an ally');
-  if (attacker.ammo <= 0) return fail('Out of ammo - reload');
+  if (!attacker.weapon.melee && attacker.ammo <= 0) return fail('Out of ammo - reload');
 
   const pv = computeShot(state.map, attacker, attacker.pos, target);
   if (!pv.canShoot) return fail(pv.reason ?? 'Cannot shoot');
@@ -282,7 +308,7 @@ export function shoot(state: GameState, id: string, targetId: string): ActionRes
   const wasDormant = target.dormant;
   attacker.ap -= 1;
   if (attacker.weapon.heavy) attacker.ap = 0; // a heavy weapon takes the whole turn: no moving or second attack after it
-  attacker.ammo -= 1;
+  if (!attacker.weapon.melee) attacker.ammo -= 1;
   attacker.attacked = true;
   attacker.idleTurns = 0;
   const events: BattleEvent[] = [resolveShot(state, attacker, target, pv, false)];
@@ -297,6 +323,8 @@ export function setOverwatch(state: GameState, id: string): ActionResult {
   const v = validateActor(state, id);
   if ('error' in v) return fail(v.error);
   const unit = v.unit;
+  if (unit.weapon.melee) return fail('Melee weapons cannot hold overwatch');
+  if (!canUseSkills(unit)) return fail('Silenced: cannot hold overwatch');
   if (unit.ammo <= 0) return fail('Out of ammo - reload');
   unit.ap = 0;
   unit.overwatch = true;
@@ -332,6 +360,7 @@ export function reviveUnit(state: GameState, id: string, targetId: string): Acti
   const target = getUnit(state, targetId);
   if (!target || !target.downed || target.alive || target.team !== unit.team) return fail('Nobody to revive');
   if (!adjacent(unit.pos, target.pos)) return fail('Too far away');
+  if (!canUseSkills(unit)) return fail('Silenced: cannot revive');
 
   unit.ap -= 1;
   target.alive = true;
@@ -339,6 +368,7 @@ export function reviveUnit(state: GameState, id: string, targetId: string): Acti
   target.hp = Math.max(1, Math.ceil(target.maxHp * REVIVE_HP_FRACTION));
   target.ap = 0;
   target.overwatch = false;
+  delete target.status;
   state.log.push({ team: unit.team, text: `${unit.name} gets ${target.name} back on their feet.`, at: [{ ...unit.pos }, { ...target.pos }] });
   return { ok: true, events: [{ type: 'revive', unitId: unit.id, targetId: target.id }] };
 }

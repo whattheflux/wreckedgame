@@ -1,5 +1,6 @@
 import type { BattleEvent, GameState, Pos, Unit } from './types';
 import { computeShot } from './combat';
+import { canUseSkills } from './status';
 import { avg, coverValueVs, nearestUnit, threatAt } from './tactics';
 import { endTurn, living, moveApCost, moveUnit, reachableFor, reload, setOverwatch, shoot } from './battle';
 
@@ -23,7 +24,8 @@ const MAX_AMBUSH_TURNS = 2;
  *  4. Otherwise advance cover-to-cover, staying with the group, more boldly the longer it has waited.
  */
 function decide(state: GameState, u: Unit): Action {
-  if (u.ammo <= 0) return { kind: 'reload' };
+  const melee = !!u.weapon.melee;
+  if (!melee && u.ammo <= 0) return { kind: 'reload' };
   const players = living(state, 'player');
   if (players.length === 0) return { kind: 'idle' };
 
@@ -35,7 +37,7 @@ function decide(state: GameState, u: Unit): Action {
 
   // 1. Already fired this turn and out in the open: shoot-and-scoot into cover, staying within weapon range.
   const threatHere = threatAt(state, u, u.pos, players);
-  if (u.attacked && u.ap >= 1 && threatHere > 0.8) {
+  if (!melee && u.attacked && u.ap >= 1 && threatHere > 0.8) {
     let best: { pos: Pos; threat: number; score: number } | null = null;
     for (const node of reach.values()) {
       if (node.cost === 0) continue;
@@ -80,6 +82,8 @@ function decide(state: GameState, u: Unit): Action {
   // 3. Dug in with the squad nearby: set an ambush.
   const nearest = nearestUnit(u.pos, players);
   if (
+    !melee &&
+    canUseSkills(u) &&
     nearest &&
     u.ap >= 1 &&
     u.idleTurns < MAX_AMBUSH_TURNS &&
@@ -108,7 +112,7 @@ function decide(state: GameState, u: Unit): Action {
   }
   if (bestAdvance && bestAdvance.score > hereScore + 0.5) return { kind: 'move', dest: bestAdvance.dest };
 
-  return u.ammo > 0 && u.ap >= 1 ? { kind: 'overwatch' } : { kind: 'idle' };
+  return !melee && canUseSkills(u) && u.ammo > 0 && u.ap >= 1 ? { kind: 'overwatch' } : { kind: 'idle' };
 }
 
 /**

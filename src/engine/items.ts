@@ -62,6 +62,21 @@ export const ITEMS: Record<ItemId, ItemDef> = Object.fromEntries([
   def({ id: 'javelin', name: 'Javelin', kind: 'weapon', slot: 'hand', weapon: 'javelin', loot: 0.7, color: '#c9d3dc', desc: 'Two-handed and heavy: a throw takes your whole turn.' }),
   def({ id: 'flareGun', name: 'Flare Gun', kind: 'weapon', slot: 'hand', weapon: 'flareGun', loot: 0.6, color: '#d8442e', desc: 'Light and loud. Two flares in the clip.' }),
   def({ id: 'pole', name: 'Sharpened Pole', kind: 'weapon', slot: 'hand', weapon: 'pole', loot: 0.7, color: '#a67c52', desc: 'Two-handed and heavy. Short reach, good aim.' }),
+  def({ id: 'stick', name: 'Stick', kind: 'weapon', slot: 'hand', weapon: 'stick', loot: 0.6, color: '#8a6a45', desc: 'A branch. Splinters after a few swings.' }),
+  def({ id: 'rollingPin', name: 'Rolling Pin', kind: 'weapon', slot: 'hand', weapon: 'rollingPin', loot: 0.6, color: '#d9c7a0', desc: 'Kitchen weapon. Sometimes leaves them seeing stars.' }),
+  def({ id: 'fryingPan', name: 'Frying Pan', kind: 'weapon', slot: 'hand', weapon: 'fryingPan', loot: 0.6, color: '#4b4f55', desc: 'Sturdy and loud. Good odds of a stun.' }),
+  def({ id: 'pipe', name: 'Steel Pipe', kind: 'weapon', slot: 'hand', weapon: 'pipe', loot: 0.6, color: '#8f9aa3', desc: 'Heavy for one hand. Can stun.' }),
+  def({ id: 'humanBone', name: 'Human Bone', kind: 'weapon', slot: 'hand', weapon: 'humanBone', loot: 0.6, color: '#e6dcc4', desc: 'Grim. Frightens people.' }),
+  def({ id: 'knife', name: 'Knife', kind: 'weapon', slot: 'hand', weapon: 'knife', loot: 0.7, color: '#c9d3dc', desc: 'Small, sharp, rarely breaks. Can open a wound.' }),
+  def({ id: 'sharpStick', name: 'Sharpened Stick', kind: 'weapon', slot: 'hand', weapon: 'sharpStick', loot: 0.6, color: '#a67c52', desc: 'A pointed stick. Can open a wound.' }),
+  def({ id: 'weightedClub', name: 'Weighted Club', kind: 'weapon', slot: 'hand', weapon: 'weightedClub', loot: 0.7, color: '#6b5a48', desc: 'Two-handed and heavy. Stuns and shakes.' }),
+  def({ id: 'torch', name: 'Torch', kind: 'weapon', slot: 'hand', weapon: 'torch', loot: 0.5, color: '#e0852e', desc: 'Sets people alight and scares them.' }),
+  def({ id: 'sandSock', name: 'Sand Sock', kind: 'weapon', slot: 'hand', weapon: 'sandSock', loot: 0.6, color: '#cdbb8e', desc: 'Gritty. Can blind.' }),
+  def({ id: 'crudeSword', name: 'Crude Sword', kind: 'weapon', slot: 'hand', weapon: 'crudeSword', loot: 0.7, color: '#b8c2cc', desc: 'Hammered from scrap. Cuts deep.' }),
+  def({ id: 'nailBat', name: 'Nail Bat', kind: 'weapon', slot: 'hand', weapon: 'nailBat', loot: 0.7, color: '#8a6a45', desc: 'Two-handed and heavy. Bleeds and stuns.' }),
+  def({ id: 'machete', name: 'Machete', kind: 'weapon', slot: 'hand', weapon: 'machete', loot: 0.7, color: '#aab4bd', desc: 'A real blade. Likely to bleed them.' }),
+  def({ id: 'poisonDagger', name: 'Poison Dagger', kind: 'weapon', slot: 'hand', weapon: 'poisonDagger', loot: 0.7, color: '#7fcf5a', desc: 'A coated blade. Often poisons.' }),
+  def({ id: 'fireAxe', name: 'Fire Axe', kind: 'weapon', slot: 'hand', weapon: 'fireAxe', loot: 0.7, color: '#d8442e', desc: 'Two-handed and heavy. Hits very hard.' }),
   // head
   def({ id: 'cap', name: 'Baseball Cap', kind: 'armor', slot: 'head', mods: { defense: 1 }, loot: 0.5, color: '#3d6fa8', desc: 'Keeps the sun off. Barely stops a stone.' }),
   def({ id: 'helmet', name: 'Bike Helmet', kind: 'armor', slot: 'head', mods: { defense: 3 }, loot: 0.4, color: '#d0b030', desc: 'Foam and plastic, but it helps.' }),
@@ -112,7 +127,7 @@ export function slotsOf(gear: Gear): string[] {
 }
 
 /** Bare hands: what you hit with when nothing is held. Not an item and not in WEAPONS, so nobody can drop or loot it. */
-export const FISTS: Weapon = { name: 'Fists', damage: [1, 2], range: 1.5, optimal: 1, aimMod: 0, critMod: 0, clip: 99, hands: 1, heavy: false };
+export const FISTS: Weapon = { name: 'Fists', damage: [1, 2], range: 1.5, optimal: 1, aimMod: 0, critMod: 0, clip: 99, hands: 1, heavy: false, melee: true, tier: 0 };
 
 /** What a unit hits with: the right hand, else the left, else bare fists. */
 export function weaponOfGear(gear: Gear): Weapon {

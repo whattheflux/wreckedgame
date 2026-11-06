@@ -66,6 +66,15 @@ npm run build    # typecheck + production build
 - After a **won** fight a spoils screen lists what's left on the field (untick anything to leave it) and each rival still out cold: **Let go** (they may remember your mercy), **Capture** (kept as a captive) or **Execute** (leaves remains). Retreating or losing forfeits all of it. Loot goes in the party stash, captives in `world.captives`, and `world.mercy` counts who you spared, captured and killed.
 - Not in yet: camp handling of captives (workers, fighters, ransom, beatings, target and medical practice), using belt items, and a way to tell the story when a spared rival turns up again.
 
+## Melee weapons and status effects
+
+- **Melee** weapons hit adjacent targets only, ignore cover (no flanking, no range falloff) and never run out of ammo. They cannot hold overwatch. Fists are tier 0 melee, so everyone can fight in a pinch.
+- **Tiers**: 0 scrap (stick, rolling pin, frying pan, steel pipe, human bone), 1 hand-made (knife, sharpened stick, weighted club, torch, sand sock), 2 crude but deadly (crude sword, nail bat, machete, poison dagger, fire axe). Lower tiers break more often.
+- **Breaking**: every swing rolls the weapon's `breakChance`; a broken weapon is destroyed and the unit falls back to the other hand or fists.
+- **Opportunity attacks**: walking away from an awake, un-stunned enemy holding a melee weapon gives each such enemy one free swing. Moving along their edge (staying adjacent) does not provoke.
+- **Statuses** (`src/engine/status.ts`): stun (lose next turn), bleed (1/turn), poison (1/turn, never fatal, -5 aim), burn (2/turn), shaken (-10 aim, -10 crit), scared (-15 aim), blind (-35 aim), silenced (no overwatch or revive). They tick at the start of the owner's turn and wear off; hits roll the weapon's `inflicts`. Charmed, confused and terrified are planned once skills and consumables exist.
+- **Art**: placeholder icons are drawn in `src/ui/actionbar.ts`; drop a PNG named after the item id into `src/assets/items/` to replace one (see the README there).
+
 ## Camp, injuries and prisoners
 
 - **Injuries** are tied to body parts and come in grades: light (shaken, broken nose, twisted ankle, concussion, cracked ribs, deep gash), serious (torn tendon: six days) and **permanent** scars (lost hand: no two-handers; lost leg; blind in one eye). The leader's knock-down is a serious injury with a 15% chance of a scar; anyone who ends a fight below 35% HP has a 40% chance of a knock that heals. A member carries at most two healing injuries (a new one replaces whichever is closest to mending); scars are extra. Healing is counted in days: one per night in camp (two at the home camp) and one per completed fight.

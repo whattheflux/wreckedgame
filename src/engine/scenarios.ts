@@ -7,6 +7,25 @@ export const WEAPONS = {
   javelin: { name: 'Javelin', damage: [4, 6], range: 5, optimal: 3, aimMod: 5, critMod: 10, clip: 2, hands: 2, heavy: true },
   flareGun: { name: 'Flare Gun', damage: [5, 8], range: 8, optimal: 5, aimMod: -5, critMod: 0, clip: 2, hands: 1, heavy: false },
   pole: { name: 'Sharpened Pole', damage: [3, 5], range: 2.5, optimal: 1.5, aimMod: 10, critMod: 10, clip: 4, hands: 2, heavy: true },
+  // ---- melee: adjacent only, cover ignored, never out of ammo, but the cheap ones fall apart (breakChance per attack)
+  // tier 0: whatever was lying around
+  stick: { name: 'Stick', damage: [1, 3], range: 1.5, optimal: 1, aimMod: 0, critMod: 0, clip: 99, hands: 1, heavy: false, melee: true, tier: 0, breakChance: 0.12 },
+  rollingPin: { name: 'Rolling Pin', damage: [2, 3], range: 1.5, optimal: 1, aimMod: 0, critMod: 0, clip: 99, hands: 1, heavy: false, melee: true, tier: 0, breakChance: 0.07, inflicts: [{ effect: 'stun', chance: 0.1 }] },
+  fryingPan: { name: 'Frying Pan', damage: [2, 3], range: 1.5, optimal: 1, aimMod: 5, critMod: 0, clip: 99, hands: 1, heavy: false, melee: true, tier: 0, breakChance: 0.05, inflicts: [{ effect: 'stun', chance: 0.2 }] },
+  pipe: { name: 'Steel Pipe', damage: [2, 4], range: 1.5, optimal: 1, aimMod: 0, critMod: 0, clip: 99, hands: 1, heavy: false, melee: true, tier: 0, breakChance: 0.05, inflicts: [{ effect: 'stun', chance: 0.15 }] },
+  humanBone: { name: 'Human Bone', damage: [1, 3], range: 1.5, optimal: 1, aimMod: 0, critMod: 5, clip: 99, hands: 1, heavy: false, melee: true, tier: 0, breakChance: 0.1, inflicts: [{ effect: 'scared', chance: 0.25 }] },
+  // tier 1: made on purpose
+  knife: { name: 'Knife', damage: [2, 4], range: 1.5, optimal: 1, aimMod: 5, critMod: 10, clip: 99, hands: 1, heavy: false, melee: true, tier: 1, breakChance: 0.03, inflicts: [{ effect: 'bleed', chance: 0.3 }] },
+  sharpStick: { name: 'Sharpened Stick', damage: [2, 4], range: 1.5, optimal: 1, aimMod: 5, critMod: 5, clip: 99, hands: 1, heavy: false, melee: true, tier: 1, breakChance: 0.08, inflicts: [{ effect: 'bleed', chance: 0.25 }] },
+  weightedClub: { name: 'Weighted Club', damage: [4, 6], range: 1.5, optimal: 1, aimMod: -5, critMod: 5, clip: 99, hands: 2, heavy: true, melee: true, tier: 1, breakChance: 0.05, inflicts: [{ effect: 'stun', chance: 0.25 }, { effect: 'shaken', chance: 0.25 }] },
+  torch: { name: 'Torch', damage: [1, 3], range: 1.5, optimal: 1, aimMod: 0, critMod: 0, clip: 99, hands: 1, heavy: false, melee: true, tier: 1, breakChance: 0.1, inflicts: [{ effect: 'burn', chance: 0.3 }, { effect: 'scared', chance: 0.2 }] },
+  sandSock: { name: 'Sand Sock', damage: [2, 3], range: 1.5, optimal: 1, aimMod: 0, critMod: 0, clip: 99, hands: 1, heavy: false, melee: true, tier: 1, breakChance: 0.06, inflicts: [{ effect: 'blind', chance: 0.25 }] },
+  // tier 2: crude but deadly
+  crudeSword: { name: 'Crude Sword', damage: [4, 6], range: 1.5, optimal: 1, aimMod: 5, critMod: 10, clip: 99, hands: 1, heavy: false, melee: true, tier: 2, breakChance: 0.02, inflicts: [{ effect: 'bleed', chance: 0.3 }] },
+  nailBat: { name: 'Nail Bat', damage: [5, 7], range: 1.5, optimal: 1, aimMod: 0, critMod: 5, clip: 99, hands: 2, heavy: true, melee: true, tier: 2, breakChance: 0.04, inflicts: [{ effect: 'bleed', chance: 0.4 }, { effect: 'stun', chance: 0.15 }] },
+  machete: { name: 'Machete', damage: [4, 5], range: 1.5, optimal: 1, aimMod: 5, critMod: 10, clip: 99, hands: 1, heavy: false, melee: true, tier: 2, breakChance: 0.03, inflicts: [{ effect: 'bleed', chance: 0.4 }] },
+  poisonDagger: { name: 'Poison Dagger', damage: [3, 4], range: 1.5, optimal: 1, aimMod: 5, critMod: 10, clip: 99, hands: 1, heavy: false, melee: true, tier: 2, breakChance: 0.04, inflicts: [{ effect: 'poison', chance: 0.5 }] },
+  fireAxe: { name: 'Fire Axe', damage: [6, 8], range: 1.5, optimal: 1, aimMod: -5, critMod: 10, clip: 99, hands: 2, heavy: true, melee: true, tier: 2, breakChance: 0.02, inflicts: [{ effect: 'bleed', chance: 0.3 }, { effect: 'shaken', chance: 0.3 }] },
 } satisfies Record<string, Weapon>;
 
 type Edit = (

@@ -2,6 +2,7 @@ import type { GameState, Pos, Unit } from '../engine/types';
 import { coverAgainst, dist, pathTo, posKey, type PathNode } from '../engine/grid';
 import type { Hint } from '../engine/hint';
 import { computeShot, EXPOSED_CRIT_BONUS, type ShotPreview } from '../engine/combat';
+import { STATUSES } from '../engine/status';
 import { DIRS, dirFromDelta, koUrl, loadedImage, spriteUrl, type Dir } from './sprites';
 import { terrainImage } from './terrain';
 
@@ -934,6 +935,25 @@ export class BoardRenderer {
     ctx.fillStyle = u.hp / u.maxHp > 0.4 ? '#6fcf7a' : '#e0674e';
     ctx.fillRect(bx, by, bw * (u.hp / u.maxHp), 4);
 
+    // status chips, a row of tiny coloured tags above the HP bar
+    if (u.status?.length) {
+      const cw = Math.max(14, tile * 0.3);
+      const total = u.status.length * (cw + 2) - 2;
+      ctx.save();
+      ctx.font = `bold ${Math.max(8, Math.round(tile * 0.18))}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      u.status.forEach((st, i) => {
+        const def = STATUSES[st.id];
+        const x = c.x - total / 2 + i * (cw + 2);
+        ctx.fillStyle = def.color;
+        ctx.fillRect(x, by - 12, cw, 10);
+        ctx.fillStyle = '#10151a';
+        ctx.fillText(`${def.tag}${st.turns}`, x + cw / 2, by - 6.5);
+      });
+      ctx.restore();
+    }
+
     // AP pips
     if (u.team === 'player' || u.ap > 0) {
       for (let i = 0; i < u.maxAp; i++) {
@@ -965,17 +985,20 @@ export class BoardRenderer {
       const hitColor = pv.hitChance >= 66 ? '#8fe0a0' : pv.hitChance >= 40 ? '#ffd27a' : '#ff8a70';
       lines.push({ text: `HIT ${pv.hitChance}%    CRIT ${pv.critChance}%`, color: hitColor, bold: true });
       lines.push({ text: `Damage ${pv.dmgMin}-${pv.dmgMax}${pv.critChance > 0 ? ` (crit x1.5)` : ''}`, color: '#d7e0e8' });
-      lines.push(
+      if (pv.melee) lines.push({ text: 'Melee: cover ignored', color: '#8fe0a0' });
+      else lines.push(
         pv.rangePenalty > 0
           ? { text: `Range ${pv.distance.toFixed(1)}: -${pv.rangePenalty} (best within ${pv.optimal})`, color: '#ffd27a' }
           : { text: `Range ${pv.distance.toFixed(1)}: full accuracy`, color: '#8fe0a0' },
       );
-      if (pv.flanked) lines.push({ text: 'FLANKED: a hit is a guaranteed crit', color: '#ff8a70', bold: true });
+      if (pv.melee) {
+        /* nothing else to say: no cover, no flank */
+      } else if (pv.flanked) lines.push({ text: 'FLANKED: a hit is a guaranteed crit', color: '#ff8a70', bold: true });
       else if (pv.cover === 'none') lines.push({ text: `EXPOSED: no cover, +${EXPOSED_CRIT_BONUS}% crit`, color: '#ffb347', bold: true });
       else lines.push({ text: `${pv.cover === 'full' ? 'Full' : 'Half'} cover: -${pv.coverPenalty}`, color: '#9fd4ff' });
     } else if (pv.reason === 'Out of range') {
       lines.push({ text: 'OUT OF RANGE', color: '#ff8a70', bold: true });
-      lines.push({ text: `${pv.distance.toFixed(1)} tiles away, max ${pv.range}`, color: '#d7e0e8' });
+      lines.push({ text: pv.melee ? `${pv.distance.toFixed(1)} tiles away: must be adjacent` : `${pv.distance.toFixed(1)} tiles away, max ${pv.range}`, color: '#d7e0e8' });
     } else {
       lines.push({ text: (pv.reason ?? 'Cannot shoot').toUpperCase(), color: '#ff8a70', bold: true });
     }
