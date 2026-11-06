@@ -146,7 +146,7 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
 
   const spawnTiles: Pos[] = [...squadPos.map(([x, y]) => ({ x, y }))];
   const units: UnitSpec[] = [];
-  const crew = rivalCrew(opts.seed, pods * podSize);
+  const crew = rivalCrew(opts.seed, pods * podSize, diff);
 
   let n = 0;
   podCentres.forEach((c, pi) => {
@@ -177,6 +177,7 @@ export function encounterScenario(opts: EncounterOptions): Scenario {
         ...spec,
         role: kid.role,
         sprite: kid.sprite,
+        ...(kid.skills.length ? { skills: kid.skills } : {}),
         gear,
         weapon: weaponOfGear(gear),
         hp: spec.hp + mods.hp,

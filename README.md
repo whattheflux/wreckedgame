@@ -158,6 +158,25 @@ Saves written before any of this are migrated on load: the character is rebuilt 
 
 Rival schools scale with the squad's average level (`veterancy` in `encounter.ts`), so a late-run fight is not a walkover.
 
+### Rivals learn too
+
+Each kind of rival kid brings its own tricks, handed out by difficulty: none at all in the easiest fights, one at difficulty 2, both from 3 up (`rivalSkills` in `rivals.ts`).
+
+| Kind | Tricks |
+| --- | --- |
+| Big Kid | Tackle, War Cry |
+| Cheerleader | War Cry, Rally |
+| Shop Kid | Brace, Tackle |
+| Goth | Unsettle, Analyse |
+| Rebel | Paint Bomb, Unsettle |
+| Drama Kid | Unsettle, Rally |
+| Stoner | Mellow Out, Brace |
+| New Kid | Brace |
+
+Deliberately none of the skills that would take a turn away from you: rivals shout, charge, brace, throw and patch each other up, but they never charm you.
+
+The AI weighs them against what it would otherwise do. It puts itself out before anything else if it is burning or nearly finished; it shouts only when the shout would catch two or more of your squad and it still has an action left to use afterwards; it calls out a gap and then shoots through it; it compares a thrown jar against its own weapon and picks the better; it charges only when a charge beats closing and swinging; and it braces when your squad will reach it next turn and it cannot reach you.
+
 ## World map
 
 The painted map in `public/worldmap.png` is the playfield. Everything the code needs to know about it lives in `src/world/worlddata.json` (pixel coordinates in the 962x537 image):

@@ -18,6 +18,12 @@ import {
   type BattleEvent,
   type GameState,
   type Unit,
+  RIVAL_KINDS,
+  WEAPONS,
+  rivalSkills,
+  EXTRA_SKILLS,
+  addStatus,
+  hasStatus,
 } from './index';
 import { rand, randInt } from './rng';
 import { arena, open, unit } from './testutil';
@@ -219,3 +225,139 @@ describe('fuzz: full battles hold their invariants', () => {
   });
 });
 
+
+// ---------- rivals using the skills their school taught them ----------
+
+const rival = (over: Partial<Unit> & Pick<Unit, 'id'>): Unit => unit({ team: 'enemy', ...over });
+
+describe('rival skills', () => {
+  it('are handed out by difficulty: none in the easiest fights, more in the hardest', () => {
+    const kind = RIVAL_KINDS.find((k) => k.label === 'Big Kid')!;
+    expect(rivalSkills(kind, 1)).toEqual([]);
+    expect(rivalSkills(kind, 2)).toHaveLength(1);
+    expect(rivalSkills(kind, 4)).toHaveLength(2);
+    for (const k of RIVAL_KINDS) for (const id of k.skills ?? []) expect(EXTRA_SKILLS[id], `${k.label}: ${id}`).toBeTruthy();
+  });
+
+  it('never include the ones that would take a turn off the player', () => {
+    const all = RIVAL_KINDS.flatMap((k) => k.skills ?? []);
+    expect(all).not.toContain('charm');
+    expect(all).not.toContain('incognito');
+  });
+
+  it('reach the battlefield on the harder encounters only', () => {
+    const easy = encounterScenario({ seed: 3, biome: 'forest', pods: 2, podSize: 3, difficulty: 1 }).units.filter((u) => u.team === 'enemy');
+    const hard = encounterScenario({ seed: 3, biome: 'forest', pods: 2, podSize: 3, difficulty: 4 }).units.filter((u) => u.team === 'enemy');
+    expect(easy.every((u) => !u.skills?.length)).toBe(true);
+    expect(hard.some((u) => (u.skills?.length ?? 0) > 0)).toBe(true);
+  });
+});
+
+describe('the AI reaches for a skill when it is the better move', () => {
+  it('puts itself out before anything else', () => {
+    const e = rival({ id: 'e', pos: { x: 8, y: 1 }, hp: 4, maxHp: 20, skills: ['mellow'] });
+    addStatus(e, 'burn');
+    const s = arena(open(12, 4), [unit({ id: 'p', team: 'player', pos: { x: 1, y: 1 } }), e]);
+    runEnemyTurn(s);
+    expect(hasStatus(e, 'burn')).toBe(false);
+    expect(e.hp).toBeGreaterThan(4);
+  });
+
+  it('shouts when it would catch a crowd, and does not waste it on one', () => {
+    const crowd = [1, 2, 3].map((i) => unit({ id: `p${i}`, team: 'player', pos: { x: 4 + i, y: 2 } }));
+    const shouter = rival({ id: 'e', pos: { x: 6, y: 1 }, skills: ['warCry'], weapon: { ...WEAPONS.slingshot, range: 1, optimal: 1 } });
+    const s = arena(open(14, 6), [...crowd, shouter]);
+    runEnemyTurn(s);
+    expect(crowd.filter((p) => hasStatus(p, 'shaken')).length).toBeGreaterThanOrEqual(2);
+
+    const lone = unit({ id: 'p', team: 'player', pos: { x: 6, y: 2 } });
+    const shouter2 = rival({ id: 'e2', pos: { x: 6, y: 1 }, skills: ['warCry'] });
+    const s2 = arena(open(14, 6), [lone, shouter2]);
+    runEnemyTurn(s2);
+    expect(shouter2.uses?.warCry ?? 0).toBe(0);
+  });
+
+  it('calls out the gap before shooting through it', () => {
+    const p = unit({ id: 'p', team: 'player', pos: { x: 6, y: 1 }, hp: 99, maxHp: 99 });
+    const e = rival({ id: 'e', pos: { x: 2, y: 1 }, skills: ['analyse'] });
+    const s = arena(open(12, 4), [p, e]);
+    runEnemyTurn(s);
+    expect(e.uses?.analyse).toBe(1);
+    expect(s.log.some((l) => l.text.includes('calls out the gap'))).toBe(true);
+  });
+
+  it('throws paint rather than taking a feeble shot', () => {
+    const p = unit({ id: 'p', team: 'player', pos: { x: 5, y: 1 }, hp: 99, maxHp: 99 });
+    // a hopeless weapon, so the jar of paint is clearly the better idea
+    const e = rival({ id: 'e', pos: { x: 2, y: 1 }, skills: ['paintBomb'], weapon: { ...WEAPONS.slingshot, damage: [1, 1], aimMod: -60 } });
+    const s = arena(open(12, 4), [p, e]);
+    runEnemyTurn(s);
+    expect(e.uses?.paintBomb ?? 0).toBeGreaterThan(0);
+  });
+
+  it('prefers its own weapon when that weapon is good', () => {
+    const p = unit({ id: 'p', team: 'player', pos: { x: 5, y: 1 }, hp: 99, maxHp: 99 });
+    const e = rival({ id: 'e', pos: { x: 2, y: 1 }, aim: 95, skills: ['paintBomb'], weapon: { ...WEAPONS.flareGun, damage: [9, 12], clip: 9 }, ammo: 9 });
+    const s = arena(open(12, 4), [p, e]);
+    runEnemyTurn(s);
+    expect(e.uses?.paintBomb ?? 0).toBe(0);
+    expect(s.log.some((l) => l.text.includes('Flare Gun'))).toBe(true);
+  });
+
+  it('charges when there is no shot to be had', () => {
+    const p = unit({ id: 'p', team: 'player', pos: { x: 5, y: 1 }, hp: 99, maxHp: 99 });
+    const e = rival({ id: 'e', pos: { x: 2, y: 1 }, skills: ['tackle'], weapon: WEAPONS.knife, mobility: 5 });
+    const s = arena(open(12, 4), [p, e]);
+    runEnemyTurn(s);
+    expect(e.uses?.tackle ?? 0).toBeGreaterThan(0);
+    expect(Math.max(Math.abs(e.pos.x - p.pos.x), Math.abs(e.pos.y - p.pos.y))).toBe(1);
+  });
+
+  it('braces when the squad is about to reach it and it cannot reach them', () => {
+    const p = unit({ id: 'p', team: 'player', pos: { x: 5, y: 1 } });
+    const e = rival({ id: 'e', pos: { x: 2, y: 1 }, skills: ['brace'], weapon: WEAPONS.knife, mobility: 1 });
+    const s = arena(open(10, 4), [p, e]);
+    runEnemyTurn(s);
+    expect(e.uses?.brace ?? 0).toBeGreaterThan(0);
+  });
+
+  it('closes and swings instead of charging when its weapon is the better bet', () => {
+    const p = unit({ id: 'p', team: 'player', pos: { x: 5, y: 1 }, hp: 99, maxHp: 99 });
+    const e = rival({ id: 'e', pos: { x: 2, y: 1 }, aim: 90, meleeAim: 90, skills: ['tackle'], weapon: WEAPONS.fireAxe, mobility: 5 });
+    const s = arena(open(12, 4), [p, e]);
+    runEnemyTurn(s);
+    expect(e.uses?.tackle ?? 0).toBe(0);
+    expect(s.log.some((l) => l.text.includes('Fire Axe'))).toBe(true);
+  });
+
+  it('never uses a skill it was never taught', () => {
+    const p = unit({ id: 'p', team: 'player', pos: { x: 5, y: 1 }, hp: 99, maxHp: 99 });
+    const e = rival({ id: 'e', pos: { x: 2, y: 1 } });
+    const s = arena(open(12, 4), [p, e]);
+    runEnemyTurn(s);
+    expect(e.uses).toBeUndefined();
+  });
+
+  it('finishes its turn even when every skill it has is useless', () => {
+    const p = unit({ id: 'p', team: 'player', pos: { x: 11, y: 3 } });
+    const e = rival({ id: 'e', pos: { x: 1, y: 1 }, skills: ['rally', 'mellow', 'brace', 'tackle', 'warCry', 'analyse'], ammo: 0, mobility: 1 });
+    e.uses = { rally: 9, mellow: 9, brace: 9, tackle: 9, warCry: 9, analyse: 9 };
+    const s = arena(open(14, 6), [p, e]);
+    runEnemyTurn(s);
+    expect(e.ap).toBe(0);
+    expect(s.active).toBe('player');
+  });
+
+  it('a whole skilled enemy turn leaves the board consistent, over many seeds', () => {
+    let used = 0;
+    for (let seed = 1; seed <= 30; seed++) {
+      const sc = encounterScenario({ seed, biome: 'forest', pods: 2, podSize: 3, difficulty: 4, level: 8, ambush: true });
+      const s = createBattle(sc);
+      for (const u of s.units) u.dormant = false; // an ambush: everyone is already awake
+      runEnemyTurn(s);
+      assertInvariants(s, `skilled rivals seed ${seed}`);
+      used += s.units.filter((u) => u.team === 'enemy' && u.uses && Object.keys(u.uses).length > 0).length;
+    }
+    expect(used).toBeGreaterThan(0);
+  });
+});

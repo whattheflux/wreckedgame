@@ -53,6 +53,11 @@ import {
   type Scenario,
   type Unit,
   pendingCount,
+  ATTRS,
+  ATTR_IDS,
+  COMBAT_SKILLS,
+  COMBAT_SKILL_IDS,
+  combatSpent,
   migrateRoster,
   grantXp,
   XP_SITE_BASE,
@@ -635,7 +640,14 @@ function openWorldInventory(after?: () => void): void {
         role: `${CLIQUES[m.clique].label} / ${CLASSES[m.schoolClass].label} Lv ${m.level}`,
         sprite: spriteKey(m),
         gear: gearOf(m),
-        stats: unitStats({ hp: m.hp, maxHp: s.hp, rangedAim: s.rangedAim, meleeAim: s.meleeAim, rangedDefense: s.rangedDefense, meleeDefense: s.meleeDefense, mobility: s.mobility, crit: s.crit }),
+        stats:
+          unitStats({ hp: m.hp, maxHp: s.hp, rangedAim: s.rangedAim, meleeAim: s.meleeAim, rangedDefense: s.rangedDefense, meleeDefense: s.meleeDefense, mobility: s.mobility, crit: s.crit }) +
+          `<br><span style="opacity:.75">${ATTR_IDS.map((id) => `<b title="${esc(ATTRS[id].label)}">${ATTRS[id].letter}</b> ${m.attributes[id]}`).join(' ')} &middot; Sight ${s.sight}</span>` +
+          (combatSpent(m.combat)
+            ? `<br><span style="opacity:.75">Trained: ${COMBAT_SKILL_IDS.filter((id) => m.combat[id]).map((id) => `${COMBAT_SKILLS[id].label} ${m.combat[id]}`).join(', ')}</span>`
+            : '') +
+          `<br><span style="opacity:.75">${m.perks.map((id) => esc(PERKS[id]?.name ?? id)).join(', ')}</span>` +
+          (m.pending.length ? `<br><b style="color:#e8b04a">${m.pending.length} level-up choice${m.pending.length === 1 ? '' : 's'} to spend (U on the map)</b>` : ''),
         weapon: weaponLine(w),
       };
     },

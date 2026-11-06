@@ -11,18 +11,30 @@ export interface RivalKind {
   label: string;
   /** art key per look; a kind with one look (e.g. only male art so far) lists just that one */
   art: { male?: string; female?: string };
+  /**
+   * What this kind of kid has worked out how to do, best trick first. They are handed out by
+   * difficulty (see `rivalSkills`), so the first fights stay simple. Deliberately none of the ones
+   * that would take a turn away from the player: rivals shout, charge, brace and throw.
+   */
+  skills?: string[];
 }
 
 export const RIVAL_KINDS: RivalKind[] = [
-  { label: 'Goth', art: { male: 'goth-male', female: 'goth-female' } },
-  { label: 'Stoner', art: { male: 'stoner-male', female: 'stoner-female' } },
-  { label: 'Shop Kid', art: { male: 'shop-male', female: 'shop-female' } },
-  { label: 'Cheerleader', art: { male: 'cheer-male', female: 'cheer-female' } },
-  { label: 'Rebel', art: { male: 'rebel-male', female: 'rebel-female' } },
-  { label: 'New Kid', art: { male: 'newkid-male', female: 'newkid-female' } },
-  { label: 'Big Kid', art: { male: 'bigkid-male', female: 'bigkid-female' } },
-  { label: 'Drama Kid', art: { male: 'drama-guy' } },
+  { label: 'Goth', art: { male: 'goth-male', female: 'goth-female' }, skills: ['unsettle', 'analyse'] },
+  { label: 'Stoner', art: { male: 'stoner-male', female: 'stoner-female' }, skills: ['mellow', 'brace'] },
+  { label: 'Shop Kid', art: { male: 'shop-male', female: 'shop-female' }, skills: ['brace', 'tackle'] },
+  { label: 'Cheerleader', art: { male: 'cheer-male', female: 'cheer-female' }, skills: ['warCry', 'rally'] },
+  { label: 'Rebel', art: { male: 'rebel-male', female: 'rebel-female' }, skills: ['paintBomb', 'unsettle'] },
+  { label: 'New Kid', art: { male: 'newkid-male', female: 'newkid-female' }, skills: ['brace'] },
+  { label: 'Big Kid', art: { male: 'bigkid-male', female: 'bigkid-female' }, skills: ['tackle', 'warCry'] },
+  { label: 'Drama Kid', art: { male: 'drama-guy' }, skills: ['unsettle', 'rally'] },
 ];
+
+/** Skills a kind brings to a fight of this difficulty: none in the easiest, one, then everything. */
+export function rivalSkills(kind: RivalKind, difficulty: number): string[] {
+  if (difficulty <= 1) return [];
+  return (kind.skills ?? []).slice(0, difficulty >= 3 ? 2 : 1);
+}
 
 export const RIVAL_SCHOOLS = [
   'Westbrook High', 'Ridgemont Prep', "St. Aldric's", 'Cutter Bay Academy', 'Hollow Pines High',
@@ -43,6 +55,8 @@ export interface RivalMember {
   /** art key, same as Unit.sprite */
   sprite: string;
   role: string;
+  /** what this one can do besides shoot (see `rivalSkills`) */
+  skills: string[];
 }
 
 export interface RivalCrew {
@@ -76,7 +90,7 @@ export function rivalLooks(): Array<{ kind: RivalKind; look: 'male' | 'female'; 
  * of every (kind, look) so a crew is as mixed as it can be before anything repeats; names are unique.
  * Uses its own random stream so it never disturbs map generation.
  */
-export function rivalCrew(seed: number, count: number): RivalCrew {
+export function rivalCrew(seed: number, count: number, difficulty = 1): RivalCrew {
   const rng: RngHolder = { rngState: (seed ^ 0x2c1b3c6d) | 0 };
   const school = RIVAL_SCHOOLS[Math.floor(rand(rng) * RIVAL_SCHOOLS.length)];
   const looks = rivalLooks();
@@ -88,7 +102,7 @@ export function rivalCrew(seed: number, count: number): RivalCrew {
     if (deck.length === 0) deck = shuffle(rng, looks);
     const pick = deck.pop()!;
     const name = (pick.look === 'male' ? male : female).pop() ?? `${pick.kind.label} ${i + 1}`;
-    members.push({ name, sprite: pick.sprite, role: `${pick.kind.label} (${school})` });
+    members.push({ name, sprite: pick.sprite, role: `${pick.kind.label} (${school})`, skills: rivalSkills(pick.kind, difficulty) });
   }
   return { school, members };
 }

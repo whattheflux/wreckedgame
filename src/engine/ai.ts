@@ -1,15 +1,26 @@
 import type { BattleEvent, GameState, Pos, Unit } from './types';
 import { computeShot } from './combat';
-import { canUseSkills, isHiddenFrom } from './status';
+import { canUseSkills, hasStatus, isHiddenFrom } from './status';
 import { avg, coverValueVs, nearestUnit, threatAt } from './tactics';
 import { endTurn, living, moveApCost, moveUnit, reachableFor, reload, setOverwatch, shoot } from './battle';
+import { TACKLE_HIT, TACKLE_STUN, skillBlock, thrownWeapon, useSkill } from './abilities';
+import { EXTRA_SKILLS, type Skill } from './skills';
+import { dist } from './grid';
 
 type Action =
   | { kind: 'shoot'; targetId: string }
   | { kind: 'move'; dest: Pos }
   | { kind: 'reload' }
   | { kind: 'overwatch' }
+  | { kind: 'skill'; skillId: string; targetId?: string }
   | { kind: 'idle' };
+
+/** Hurt this badly and a rival who can shake it off will stop and do that. */
+const PATCH_UP_BELOW = 0.4;
+/** A shout is only worth a turn if it lands on at least this many of the squad. */
+const SHOUT_WORTH_IT = 2;
+/** How much better a thrown skill has to look than the plain attack before the AI reaches for it. */
+const SKILL_MARGIN = 1.15;
 
 /** Score penalty for ending a move inside a sightline a player unit is watching. */
 const WATCHED_PENALTY = 4;
@@ -23,12 +34,33 @@ const MAX_AMBUSH_TURNS = 2;
  *  3. Sitting in good cover with the squad close: hold overwatch and let them walk into it.
  *  4. Otherwise advance cover-to-cover, staying with the group, more boldly the longer it has waited.
  */
+/** The expected damage a shot preview is worth, with a nudge for finishing someone off. */
+function shotValue(pv: ReturnType<typeof computeShot>, target: Unit): number {
+  if (!pv.canShoot) return 0;
+  const chance = pv.hitChance / 100;
+  let v = chance * avg(pv.dmgMin, pv.dmgMax) * (1 + 0.5 * (pv.critChance / 100)); // a crit is +50% damage
+  if (pv.dmgMax >= target.hp) v += chance * 4; // go for the kill
+  return v;
+}
+
+/** The skills this unit could use right now, in the order its kind prefers them. */
+const readySkills = (state: GameState, u: Unit): Skill[] =>
+  (u.skills ?? []).map((id) => EXTRA_SKILLS[id]).filter((k): k is Skill => !!k && skillBlock(state, u, k) === null);
+
 function decide(state: GameState, u: Unit): Action {
   const melee = !!u.weapon.melee;
   if (!melee && u.ammo <= 0) return { kind: 'reload' };
   // hidden (incognito) units can't be seen from a distance, so they aren't targets or threats
   const players = living(state, 'player').filter((p) => !isHiddenFrom(p, u));
   if (players.length === 0) return { kind: 'idle' };
+  const ready = readySkills(state, u);
+  const has = (id: string): Skill | undefined => ready.find((k) => k.id === id);
+
+  // 0. Burning, bleeding or nearly finished, and able to do something about it: do that first.
+  const mellow = has('mellow');
+  if (mellow && (u.hp <= u.maxHp * PATCH_UP_BELOW || hasStatus(u, 'burn') || hasStatus(u, 'bleed'))) {
+    return { kind: 'skill', skillId: mellow.id };
+  }
 
   const reach = reachableFor(state, u);
   const watchers = players.filter((p) => p.overwatch && p.ammo > 0);
@@ -49,6 +81,21 @@ function decide(state: GameState, u: Unit): Action {
       if (!best || score > best.score) best = { pos: node.pos, threat, score };
     }
     if (best && threatHere - best.threat >= 0.8) return { kind: 'move', dest: best.pos };
+  }
+
+  // 1b. A shout that catches a crowd is worth an action point, provided there is one left to use after.
+  for (const shout of [has('warCry'), has('unsettle')]) {
+    if (!shout || u.ap < 2) continue;
+    const reach = shout.range ?? 4;
+    const caught = players.filter((p) => dist(u.pos, p.pos) <= reach && !hasStatus(p, shout.id === 'warCry' ? 'shaken' : 'scared'));
+    if (caught.length >= SHOUT_WORTH_IT) return { kind: 'skill', skillId: shout.id };
+  }
+
+  // 1c. Call out the gap in someone, then shoot them with the rest of the turn.
+  const analyse = has('analyse');
+  if (analyse && u.ap >= 2) {
+    const mark = players.find((p) => !hasStatus(p, 'marked') && computeShot(state.map, u, u.pos, p).canShoot && dist(u.pos, p.pos) <= (analyse.range ?? 9));
+    if (mark) return { kind: 'skill', skillId: analyse.id, targetId: mark.id };
   }
 
   // 2. Best shot, from here or after one move.
@@ -76,12 +123,48 @@ function decide(state: GameState, u: Unit): Action {
     if (node.cost > 0 && isWatched(node.pos)) score -= WATCHED_PENALTY;
     if (!bestShot || score > bestShot.score) bestShot = { score, dest: node.pos, cost: node.cost, targetId };
   }
+  // 2b. Anything thrown is weighed against that shot: a beaker or a jar of paint from where they stand.
+  let bestThrow: { score: number; skillId: string; targetId: string } | null = null;
+  for (const k of ready) {
+    const w = thrownWeapon(u, k);
+    if (!w) continue;
+    for (const p of players) {
+      const pv = computeShot(state.map, { aim: u.aim, meleeAim: u.meleeAim, critChance: u.critChance, weapon: w, status: u.status, flags: u.flags }, u.pos, p);
+      // what it leaves behind is worth something beyond the damage
+      const value = shotValue(pv, p) + (pv.canShoot ? (w.inflicts ?? []).reduce((n, i) => n + i.chance * 2, 0) : 0);
+      if (value > 0 && (!bestThrow || value > bestThrow.score)) bestThrow = { score: value, skillId: k.id, targetId: p.id };
+    }
+  }
+  const standingShot = bestShot && bestShot.cost === 0 ? bestShot.score : 0;
+  if (bestThrow && bestThrow.score * SKILL_MARGIN > standingShot) {
+    return { kind: 'skill', skillId: bestThrow.skillId, targetId: bestThrow.targetId };
+  }
+
+  // 2c. A shoulder charge covers the same ground in one action, and usually stuns. Worth it when the
+  // weapon they would have closed with is not up to much; not worth it when it is.
+  const tackle = has('tackle');
+  if (tackle) {
+    let best: { score: number; targetId: string } | null = null;
+    for (const p of players) {
+      if (dist(u.pos, p.pos) > u.mobility + 1.5) continue;
+      const pv = computeShot(state.map, { aim: u.aim, meleeAim: u.meleeAim, critChance: u.critChance, weapon: TACKLE_HIT, status: u.status, flags: u.flags }, p.pos, p);
+      const score = shotValue({ ...pv, canShoot: true }, p) + TACKLE_STUN * 4;
+      if (!best || score > best.score) best = { score, targetId: p.id };
+    }
+    // the plain plan is whatever branch 2 found; a charge has to beat it outright
+    if (best && best.score > (bestShot?.score ?? 0)) return { kind: 'skill', skillId: tackle.id, targetId: best.targetId };
+  }
+
   if (bestShot) {
     return bestShot.cost === 0 ? { kind: 'shoot', targetId: bestShot.targetId } : { kind: 'move', dest: bestShot.dest };
   }
 
-  // 3. Dug in with the squad nearby: set an ambush.
+  // 3. Dug in with the squad nearby: set an ambush, or plant your feet if that is all you can do.
   const nearest = nearestUnit(u.pos, players);
+  const brace = has('brace');
+  if (brace && nearest && nearest.d <= u.mobility + 2 && (melee || u.ammo <= 0) && coverValueVs(state.map, nearest.unit.pos, u.pos) < 2) {
+    return { kind: 'skill', skillId: brace.id };
+  }
   if (
     !melee &&
     canUseSkills(u) &&
@@ -113,7 +196,12 @@ function decide(state: GameState, u: Unit): Action {
   }
   if (bestAdvance && bestAdvance.score > hereScore + 0.5) return { kind: 'move', dest: bestAdvance.dest };
 
-  return !melee && canUseSkills(u) && u.ammo > 0 && u.ap >= 1 ? { kind: 'overwatch' } : { kind: 'idle' };
+  if (!melee && canUseSkills(u) && u.ammo > 0 && u.ap >= 1) return { kind: 'overwatch' };
+  // Nothing better to do: get a friend back on their feet, or brace.
+  const rally = has('rally');
+  if (rally) return { kind: 'skill', skillId: rally.id };
+  if (brace) return { kind: 'skill', skillId: brace.id };
+  return { kind: 'idle' };
 }
 
 /**
@@ -145,6 +233,10 @@ export function enemyStep(state: GameState): BattleEvent[] | null {
     case 'overwatch':
       result = setOverwatch(state, unit.id);
       if (result.ok) unit.idleTurns += 1;
+      break;
+    case 'skill':
+      result = useSkill(state, unit.id, action.skillId, action.targetId);
+      if (result.ok) unit.idleTurns = 0;
       break;
     default:
       result = { ok: true, events: [] as BattleEvent[] };

@@ -9,6 +9,7 @@ export * from './hint';
 export * from './battle';
 export * from './ai';
 export * from './scenarios';
+export * from './rivals';
 export * from './encounter';
 export * from './roster';
 export * from './skills';
