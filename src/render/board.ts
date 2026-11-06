@@ -55,6 +55,16 @@ export class BoardRenderer {
   private goal = { x: 0, y: 0 };
   /** Quarter turns clockwise: 0 = north up. Only the view turns; units stay upright. */
   private rot = 0;
+  /**
+   * Turn animation. `rot` jumps straight to the new orientation; the ground is drawn in it but turned back by `spin`
+   * radians, which eases to 0, so the view swings round instead of flipping. `pivot` is the screen point it turns
+   * about (the camera centre); `pivotOff` is where that point sat on screen before the turn, relative to the pivot.
+   */
+  private spin = 0;
+  private pivot = { x: 0, y: 0 };
+  private pivotOff = { x: 0, y: 0 };
+  private pivotOffFrac = 1;
+  private pendingFrom: { x: number; y: number } | null = null;
   private mw = 1;
   private mh = 1;
   private fit = 32;
@@ -96,8 +106,9 @@ export class BoardRenderer {
     const rect = this.canvas.getBoundingClientRect();
     const w = rect.width;
     const h = rect.height;
-    const cx = clientX === undefined ? w / 2 : clientX - rect.left;
-    const cy = clientY === undefined ? h / 2 : clientY - rect.top;
+    const cur = this.unspun({ x: (clientX ?? rect.left + w / 2) - rect.left, y: (clientY ?? rect.top + h / 2) - rect.top });
+    const cx = cur.x;
+    const cy = cur.y;
     const oldTile = this.tile;
     const newTile = Math.max(12, Math.round(this.fit * next));
     this.zoom = next;
@@ -112,7 +123,48 @@ export class BoardRenderer {
 
   /** Turn the view a quarter turn (+1 clockwise, -1 anticlockwise). */
   rotate(step: 1 | -1): void {
+    this.pendingFrom = this.displayPivot();
+    this.pivotOffFrac = Math.min(1, Math.max(0.001, Math.abs(this.spin) / (Math.PI / 2)));
     this.rot = (this.rot + step + 4) % 4;
+    this.spin -= (step * Math.PI) / 2;
+    this.spin = Math.atan2(Math.sin(this.spin), Math.cos(this.spin)); // chained turns take the short way round
+  }
+
+  /** Where the pivot is actually drawn right now (it slides from its old screen position to its new one). */
+  private displayPivot(): { x: number; y: number } {
+    const k = Math.min(1, Math.abs(this.spin) / (Math.PI / 2) / this.pivotOffFrac);
+    return { x: this.pivot.x + this.pivotOff.x * k, y: this.pivot.y + this.pivotOff.y * k };
+  }
+
+  /** Layout position (as if no turn were in progress) -> where it is drawn while the view swings round. */
+  private spun(p: { x: number; y: number }): { x: number; y: number } {
+    if (!this.spin) return p;
+    const d = this.displayPivot();
+    const c = Math.cos(this.spin);
+    const s = Math.sin(this.spin);
+    const x = p.x - this.pivot.x;
+    const y = p.y - this.pivot.y;
+    return { x: d.x + x * c - y * s, y: d.y + x * s + y * c };
+  }
+
+  /** The inverse of `spun`: a point on screen -> layout position, for the mouse. */
+  private unspun(p: { x: number; y: number }): { x: number; y: number } {
+    if (!this.spin) return p;
+    const d = this.displayPivot();
+    const c = Math.cos(-this.spin);
+    const s = Math.sin(-this.spin);
+    const x = p.x - d.x;
+    const y = p.y - d.y;
+    return { x: this.pivot.x + x * c - y * s, y: this.pivot.y + x * s + y * c };
+  }
+
+  /** Apply the turn to the canvas, for everything that lies flat on the ground. */
+  private applySpin(): void {
+    if (!this.spin) return;
+    const d = this.displayPivot();
+    this.ctx.translate(d.x, d.y);
+    this.ctx.rotate(this.spin);
+    this.ctx.translate(-this.pivot.x, -this.pivot.y);
   }
 
   get zoomLevel(): number {
@@ -184,8 +236,9 @@ export class BoardRenderer {
     const rect = this.canvas.getBoundingClientRect();
     this.mw = state.map.width;
     this.mh = state.map.height;
-    const vx = Math.floor((clientX - rect.left - this.ox) / this.tile);
-    const vy = Math.floor((clientY - rect.top - this.oy) / this.tile);
+    const at = this.unspun({ x: clientX - rect.left, y: clientY - rect.top });
+    const vx = Math.floor((at.x - this.ox) / this.tile);
+    const vy = Math.floor((at.y - this.oy) / this.tile);
     // cell indices turn like cell centres do, so go via the centre and back
     const m = this.fromView(vx + 0.5, vy + 0.5);
     const x = Math.floor(m.x);
@@ -226,6 +279,15 @@ export class BoardRenderer {
     const cv = this.toView(this.cam.x, this.cam.y);
     this.ox = axis(w, vw, cv.x);
     this.oy = axis(h, vh, cv.y);
+    this.pivot = { x: this.ox + cv.x * this.tile, y: this.oy + cv.y * this.tile };
+    if (this.pendingFrom) {
+      this.pivotOff = { x: this.pendingFrom.x - this.pivot.x, y: this.pendingFrom.y - this.pivot.y };
+      this.pendingFrom = null;
+    }
+    if (this.spin) {
+      this.spin -= this.spin * (1 - Math.exp(-dt * 11));
+      if (Math.abs(this.spin) < 0.01) this.spin = 0;
+    }
     return { w, h };
   }
 
@@ -242,29 +304,46 @@ export class BoardRenderer {
     return { x: this.ox + (v.x - 0.5) * this.tile, y: this.oy + (v.y - 0.5) * this.tile };
   }
 
-  private center(p: Pos): { x: number; y: number } {
+  /** Tile centre in layout space: for anything drawn inside the turning ground layer. */
+  private rawCenter(p: Pos): { x: number; y: number } {
     const o = this.px(p);
     return { x: o.x + this.tile / 2, y: o.y + this.tile / 2 };
   }
 
+  /** Tile centre as drawn on screen, turn included: for things that stand upright (units, labels, markers). */
+  private center(p: Pos): { x: number; y: number } {
+    return this.spun(this.rawCenter(p));
+  }
+
   draw(state: GameState, view: ViewState): void {
     const { w, h } = this.layout(state);
-    const { ctx, tile } = this;
+    const { ctx } = this;
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = '#0b1117';
     ctx.fillRect(0, 0, w, h);
 
+    // The ground (terrain, fog, outlines, rings, grid) swings round with the view...
+    ctx.save();
+    this.applySpin();
     this.drawTerrain(state);
     this.drawFog(state, view);
     this.drawOverlays(state, view);
     this.drawShotLine(state, view);
+    this.drawGrid();
+    ctx.restore();
+
+    // ...while everything standing on it stays upright, only its position following the turn.
     for (const u of state.units) if (!u.alive && !u.downed && this.canSee(u, view)) this.drawFallen(u);
     for (const u of state.units) if (u.downed && !u.alive) this.drawDowned(u, state);
     for (const u of state.units) if (u.alive && this.canSee(u, view)) this.drawUnit(u, state, view);
+    this.drawMarkers(state, view); // after the units, so a sprite never hides a cover marker
     this.drawPreviewLabel(state, view);
     this.drawEffects();
     this.drawHint(view);
+  }
 
+  private drawGrid(): void {
+    const { ctx, tile } = this;
     ctx.strokeStyle = 'rgba(255,255,255,0.04)';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -326,7 +405,7 @@ export class BoardRenderer {
     const { ctx, tile } = this;
     const bw = this.viewW() * tile;
     const bh = this.viewH() * tile;
-    const ang = h.angle + (this.rot * Math.PI) / 2;
+    const ang = h.angle + (this.rot * Math.PI) / 2 + this.spin;
     const cx = this.ox + bw / 2;
     const cy = this.oy + bh / 2;
     const dx = Math.cos(ang);
@@ -414,47 +493,25 @@ export class BoardRenderer {
         if (!same(1, 0)) { ctx.moveTo(o.x + tile - 1, o.y); ctx.lineTo(o.x + tile - 1, o.y + tile); }
         ctx.stroke();
       }
-      // Cover you would get on each reachable tile, against the nearest enemy you can see.
-      const nearest = (p: Pos): Unit | undefined => foes.reduce<Unit | undefined>((b, e) => (!b || dist(p, e.pos) < dist(p, b.pos) ? e : b), undefined);
-      for (const n of view.reach.values()) {
-        const foe = nearest(n.pos);
-        if (!foe) break;
-        const cover = coverAgainst(state.map, foe.pos, n.pos);
-        if (cover === 'none') continue;
-        const o = this.px(n.pos);
-        this.drawShield(o.x + tile * 0.5, o.y + tile * 0.5, tile * 0.2, cover, 0.9);
-      }
     }
 
     // Weapon range: green ring = full accuracy, amber ring = maximum range. Brightest while aiming.
     // Hovering a reachable tile shows the same rings from there, and what you could hit from it.
     const aiming = view.mode === 'shoot';
-    this.drawRangeRings(sel.pos, sel.weapon.optimal, sel.weapon.range, aiming ? 1 : 0.45, aiming);
+    this.drawRangeRings(sel.pos, sel.weapon.optimal, sel.weapon.range, aiming ? 1 : 0.45);
     if (hoverNode && hoverNode.cost > 0 && view.hover) {
-      this.drawRangeRings(view.hover, sel.weapon.optimal, sel.weapon.range, 0.9, false);
-      for (const e of foes) {
-        const pv = computeShot(state.map, sel, view.hover, e);
-        if (!pv.canShoot) continue;
-        const c = this.center(e.pos);
-        this.drawTag(`${pv.hitChance}%`, c.x, c.y + tile * 0.62, '#ffd27a');
-      }
+      this.drawRangeRings(view.hover, sel.weapon.optimal, sel.weapon.range, 0.9);
     }
 
     if (view.mode === 'shoot') {
-      for (const e of state.units) {
-        if (!e.alive || e.team === sel.team || !this.canSee(e, view)) continue;
-        const pv = computeShot(state.map, sel, sel.pos, e);
-        const c = this.center(e.pos);
-        if (!pv.canShoot) {
-          if (pv.reason === 'Out of range') this.drawTag('OUT OF RANGE', c.x, c.y + tile * 0.62, '#9aa7b3');
-          continue;
-        }
+      for (const e of foes) {
+        if (!computeShot(state.map, sel, sel.pos, e).canShoot) continue;
+        const c = this.rawCenter(e.pos);
         ctx.strokeStyle = 'rgba(255,90,70,0.9)';
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(c.x, c.y, tile * 0.46, 0, Math.PI * 2);
         ctx.stroke();
-        this.drawCoverBadge(e.pos, pv);
       }
     }
 
@@ -466,10 +523,66 @@ export class BoardRenderer {
     }
   }
 
+  /**
+   * Everything that annotates the board and must stay readable: cover shields, hit-chance tags, range labels.
+   * Drawn after the units (sprites are taller than a tile and would otherwise hide them) and upright.
+   */
+  private drawMarkers(state: GameState, view: ViewState): void {
+    const { tile } = this;
+    const sel = this.selected(state, view);
+    if (!sel) return;
+    const foes = state.units.filter((e) => e.alive && e.team !== sel.team && this.canSee(e, view));
+    const hoverNode = view.hover && view.reach ? view.reach.get(posKey(view.hover.x, view.hover.y)) : undefined;
+
+    // Cover you would get on each reachable tile, against the nearest enemy you can see.
+    if (view.mode === 'move' && view.reach && foes.length) {
+      const nearest = (p: Pos): Unit => foes.reduce((b, e) => (dist(p, e.pos) < dist(p, b.pos) ? e : b));
+      for (const n of view.reach.values()) {
+        if (n.cost === 0) continue;
+        const cover = coverAgainst(state.map, nearest(n.pos).pos, n.pos);
+        if (cover === 'none') continue;
+        const c = this.center(n.pos);
+        this.drawShield(c.x, c.y, tile * 0.2, cover, 0.9);
+      }
+    }
+
+    if (view.mode === 'shoot') {
+      this.drawRangeLabels(sel.pos, sel.weapon.optimal, sel.weapon.range);
+      for (const e of foes) {
+        const pv = computeShot(state.map, sel, sel.pos, e);
+        const c = this.center(e.pos);
+        if (!pv.canShoot) {
+          if (pv.reason === 'Out of range') this.drawTag('OUT OF RANGE', c.x, c.y + tile * 0.62, '#9aa7b3');
+          continue;
+        }
+        this.drawCoverBadge(e.pos, pv);
+      }
+    }
+
+    // Hovering a reachable tile: what you could hit from it.
+    if (hoverNode && hoverNode.cost > 0 && view.hover) {
+      for (const e of foes) {
+        const pv = computeShot(state.map, sel, view.hover, e);
+        if (!pv.canShoot) continue;
+        const c = this.center(e.pos);
+        this.drawTag(`${pv.hitChance}%`, c.x, c.y + tile * 0.62, '#ffd27a');
+      }
+    }
+  }
+
+  /** "best N" / "max N" labels at the top of the two range rings. */
+  private drawRangeLabels(at: Pos, optimal: number, range: number): void {
+    const c = this.rawCenter(at);
+    const best = this.spun({ x: c.x, y: c.y - optimal * this.tile });
+    const max = this.spun({ x: c.x, y: c.y - range * this.tile });
+    this.drawTag(`best ${optimal}`, best.x, best.y - 8, '#8fe0a0');
+    this.drawTag(`max ${range}`, max.x, max.y - 8, '#ffd27a');
+  }
+
   /** Two rings around a tile: solid green out to full-accuracy range, dashed amber out to maximum range. */
-  private drawRangeRings(at: Pos, optimal: number, range: number, alpha: number, labels: boolean): void {
+  private drawRangeRings(at: Pos, optimal: number, range: number, alpha: number): void {
     const { ctx, tile } = this;
-    const c = this.center(at);
+    const c = this.rawCenter(at);
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.lineWidth = 2;
@@ -486,10 +599,6 @@ export class BoardRenderer {
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
-    if (labels) {
-      this.drawTag(`best ${optimal}`, c.x, c.y - optimal * tile - 8, '#8fe0a0');
-      this.drawTag(`max ${range}`, c.x, c.y - range * tile - 8, '#ffd27a');
-    }
   }
 
   /** A small dark pill with text, centred on (x, y). */
@@ -557,10 +666,11 @@ export class BoardRenderer {
   /** Cover status of a target as seen by the selected shooter: a shield, or a red broken one when flanked. */
   private drawCoverBadge(at: Pos, pv: ShotPreview): void {
     const { tile } = this;
-    const o = this.px(at);
+    const c = this.center(at);
     const kind = pv.flanked ? 'flank' : pv.cover;
     if (kind === 'none') return;
-    this.drawShield(o.x + tile * 0.82, o.y + tile * 0.22, tile * 0.2, kind);
+    // to the right of the sprite, at chest height
+    this.drawShield(c.x + tile * 0.62, c.y - tile * 0.4, tile * 0.23, kind);
   }
 
   private drawShotLine(state: GameState, view: ViewState): void {
@@ -569,8 +679,8 @@ export class BoardRenderer {
     const target = state.units.find((u) => u.id === view.previewTargetId);
     if (!target) return;
     const { ctx } = this;
-    const a = this.center(sel.pos);
-    const b = this.center(target.pos);
+    const a = this.rawCenter(sel.pos);
+    const b = this.rawCenter(target.pos);
     ctx.setLineDash([6, 5]);
     ctx.strokeStyle = view.preview.canShoot ? 'rgba(255,210,120,0.9)' : 'rgba(200,200,200,0.35)';
     ctx.lineWidth = 2;
@@ -772,7 +882,7 @@ export class BoardRenderer {
     }
     w += 18;
     const h = lines.length * lh + 10;
-    const { w: cw } = this.layout(state);
+    const cw = this.canvas.clientWidth;
     let bx = c.x - w / 2;
     let by = c.y - tile * 0.6 - h;
     if (by < 4) by = c.y + tile * 0.6; // not enough room above: go below
