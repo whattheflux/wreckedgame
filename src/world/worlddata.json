@@ -24,7 +24,7 @@
   ],
   "sites": [
     { "id": "start", "name": "Landing Beach", "kind": "landmark", "x": 252, "y": 376, "radius": 22, "blurb": "Where you washed ashore. Splintered deck planks and a cooler full of warm drinks." },
-    { "id": "camp", "name": "Survivors' Camp", "kind": "home", "x": 374, "y": 408, "radius": 30, "blurb": "Your camp. Base building comes later: this is where the tents, workshop and research bench will go." },
+    { "id": "camp", "name": "Survivors' Camp", "kind": "home", "x": 374, "y": 408, "radius": 30, "blurb": "Tarpaulins over deck chairs and a cooking fire. The kids who stopped running live here, and they are starting to notice you." },
     { "id": "hull", "name": "Wrecked Hull", "kind": "wreck", "x": 224, "y": 392, "radius": 22, "difficulty": 1, "reward": 5, "blurb": "A split section of the ship's hull, picked over by somebody." },
     { "id": "lifeboats", "name": "Broken Lifeboats", "kind": "wreck", "x": 292, "y": 468, "radius": 22, "difficulty": 1, "reward": 5, "blurb": "Smashed lifeboats half-buried in the sand." },
     { "id": "ruins", "name": "Wildlands Ruins", "kind": "ruin", "x": 312, "y": 322, "radius": 22, "difficulty": 1, "reward": 8, "blurb": "Overgrown stonework older than the ship." },

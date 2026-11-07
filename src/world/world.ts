@@ -3,6 +3,7 @@ import type { Biome } from '../engine/types';
 import { rand } from '../engine/rng';
 import type { ItemId } from '../engine/items';
 import type { Captive, Mercy } from './spoils';
+import type { SettlementState } from './settlement';
 import { createStarterRoster, type PlayerChoice, type Roster } from '../engine/roster';
 
 // ---------- data (see worlddata.json; coordinates are pixels in the reference map) ----------
@@ -298,6 +299,8 @@ export interface WorldState {
   day?: number;
   /** regions and sites already found, so a discovery only pays once. Absent on older saves. */
   seen?: Record<string, boolean>;
+  /** settlements the player has dealt with, by site id. Created on demand; see `ensureSettlement`. */
+  settlements?: Record<string, SettlementState>;
 }
 
 export function createWorld(seed: number, player?: PlayerChoice): WorldState {

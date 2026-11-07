@@ -108,6 +108,21 @@
       #overlay .choice .letter { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 4px; background: #2a3b4a; color: #9fd3ef; font-size: 11px; }
       #overlay .choice[disabled] { opacity: 0.4; cursor: default; }
       #overlay .choice.perk .gain { color: #8fd39a; }
+      #overlay .card:has(.sbody) { max-width: 860px; }
+      #overlay .sbody { max-height: 54vh; overflow-y: auto; padding-right: 4px; }
+      #overlay .sbody h3 { margin: 14px 0 6px; font-size: 14px; }
+      #overlay .sbody h3 small { font-weight: 400; opacity: 0.6; margin-left: 6px; }
+      #overlay .sbody h3:first-child { margin-top: 0; }
+      #overlay .dim { opacity: 0.65; }
+      #overlay .gain { color: #8fd39a; font-size: 12px; }
+      #overlay .mrow { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; padding: 8px 10px; margin-bottom: 6px; background: #141f29; border: 1px solid #2a3b4a; border-radius: 6px; font-size: 13px; }
+      #overlay .mrow.ready { border-color: #4f8f5f; background: #16261c; }
+      #overlay .mbtns { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
+      #overlay .chip.story { background: #3a2a4a; border-color: #6a4a8a; color: #d8b8f0; }
+      #overlay .pbar { display: inline-block; width: 90px; height: 6px; background: #22303c; border-radius: 3px; overflow: hidden; vertical-align: middle; }
+      #overlay .pbar > span { display: block; height: 100%; background: #6ab0e0; }
+      #overlay .choice i { margin-left: auto; font-style: normal; color: #e8b04a; font-variant-numeric: tabular-nums; }
+      #overlay .choice b { display: flex; align-items: baseline; gap: 6px; }
       #overlay .preview { margin-top: 14px; padding: 8px 10px; border-left: 3px solid #7ec4e8; background: #1a2530; font-size: 13px; line-height: 1.5; }
       #overlay .row { display: flex; gap: 8px; margin-top: 16px; }
       #overlay .card:has(.inv) { max-width: 920px; }

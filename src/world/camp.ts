@@ -40,10 +40,14 @@ export function rollAmbush(w: WorldState, opts: NightOptions): boolean {
  * Morning comes: a day passes, everyone mends by `kind` (the watcher only half as much), healing injuries tick down
  * (twice as fast at home), prisoners recover too. Returns log lines.
  */
-export function morning(w: WorldState, kind: Morning, watch?: string): string[] {
+/**
+ * Sleep through to morning. `bonusDays` is extra mending from somewhere comfortable to sleep (a
+ * house in a settlement, see `restBonusOf`).
+ */
+export function morning(w: WorldState, kind: Morning, watch?: string, bonusDays = 0): string[] {
   const notes: string[] = [];
   w.day = dayOf(w) + 1;
-  const days = kind === 'home' ? 2 : 1;
+  const days = (kind === 'home' ? 2 : 1) + Math.max(0, bonusDays);
   for (const m of livingSquad(w.roster)) {
     const max = effectiveStats(m).hp;
     const share = m.id === watch ? HEAL_SHARE[kind] / 2 : HEAL_SHARE[kind];

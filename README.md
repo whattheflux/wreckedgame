@@ -13,7 +13,34 @@ npm run build    # typecheck + production build
 
 ## Controls
 
-### World map (free roam)
+### Settlements
+
+The Survivors' Camp is somebody else's place, not a base you build. You earn a position in it by doing its work, and it grows around you.
+
+**Standing** comes from the jobs its people post, plus a little for taking a hostile site off the map. Four tiers:
+
+| Tier | Standing | What opens |
+| --- | --- | --- |
+| Shanty | 0 | Mission board, a thin store |
+| Camp | 25 | Full store, **training guild** |
+| Village | 75 | **Houses for sale**, better stock, the scout starts talking |
+| Town | 160 | Best stock, hard training, everyone deals with you |
+
+**Mission guild.** Five kinds of work, drawn fresh each day and fixed for that day, so reloading cannot reshuffle the board: clear a named hostile site, win a fight in a named region, put down N rivals, bring N of an item, or donate scrap. Three jobs at a time. Clears and patrols finish out in the world and you report back; donations and deliveries are handed over at the board. Donating is deliberately poor value for standing (`DONATION_PER_STANDING`) — the camp grows because of what you do for it, not what you can afford to give it.
+
+**Story work** sits on the same board, posted by the people who run the place, and is never crowded out by a bad roll of the dice. It is a chain: each one waits for the one before it and for the camp to be big enough to care. `STORY_MISSIONS` in `missions.ts` is three placeholder beats with real rewards wired up — replace the text and it arrives in the game with no other changes.
+
+**Store.** Stock is drawn daily from everything the current tier carries, at most two of a consumable and one of anything else. It buys from your stash at 40% of list. Residents get a discount.
+
+**Training guild.** Pay scrap to put one squad member through a session, three sessions a day across the squad. Training buys **experience, never points** — levelling stays the only place attributes, combat skills and perks come from, so no amount of scrap can take the progression curve apart.
+
+**Houses.** Bunk, Cabin and Hull-plate house. Each gives faster injury healing for a night slept at the settlement and, from the Cabin up, a resident's discount at the store. Moving up trades half of what you paid for the old one against the new.
+
+**People.** Marla, Deke and Ivy, each appearing at their own tier and each carrying a link in the story chain.
+
+Press `E` at the settlement for the screen, `C` to sleep there. Adding a second settlement is an entry in `SETTLEMENTS` plus a site in the world data; nothing else needs to change.
+
+## World map (free roam)
 
 | Input | Action |
 | --- | --- |
@@ -282,7 +309,7 @@ The overworld calls into the battle engine for encounters; base and research wil
 4. [x] Camera zoom and rotation
 5. [x] Unit model: clique x class, SCHOLAR attributes, five combat skills, perks, traits, injuries, levelling to 12, squad pick, knock-down/revive, autosave
 6. [ ] Tech tree as data (spears -> metalwork -> chemistry/gunpowder -> crossbows -> steam -> electricity) gating weapons, armour, buildings
-7. [ ] Base view: building placement + resource loop
+7. [x] Settlements: NPC towns with tiers, a mission guild, store, training guild, houses and story NPCs (see Settlements)
 8. [x] Free-roam world map (your painted map) with random encounters and assaultable sites
-9. [ ] Faction territories and missions on the world map (persistent squad HP/injuries are done)
-10. [ ] Story layer
+9. [ ] Faction territories on the world map (missions and persistent squad HP/injuries are done)
+10. [ ] Story layer (the chain in `missions.ts` is the hook; the beats are placeholders)

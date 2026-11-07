@@ -1,4 +1,5 @@
 export * from './types';
+export * from './rng';
 export * from './attributes';
 export * from './perks';
 export * from './grid';

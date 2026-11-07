@@ -78,6 +78,19 @@ import { collectSpoils, ensureStores, resolveSpoils } from './world/spoils';
 import { morning, rollAmbush } from './world/camp';
 import { showCamp } from './ui/camp';
 import { showLevelUp } from './ui/levelup';
+import { showSettlement, settlementSummary } from './ui/settlement';
+import {
+  SETTLEMENTS,
+  SITE_CLEAR_STANDING,
+  addStanding,
+  ensureSettlement,
+  isSettlement,
+  refreshSettlement,
+  restBonusOf,
+  visitedSettlements,
+  type SettlementState,
+} from './world/settlement';
+import { recordClear, recordKills, recordWin, type Mission } from './world/missions';
 import { clearSave, loadGame, saveGame } from './world/save';
 import { BoardRenderer, type ViewState } from './render/board';
 import { koUrl, preloadArt, spriteUrl } from './render/sprites';
@@ -681,7 +694,8 @@ const battleButtons: Btn[] = [
 
 const worldButtons: Btn[] = [
   { label: 'Enter site (E)', key: 'e', run: () => enterSite(siteNear(world.pos)), enabled: () => !!siteNear(world.pos) },
-  { label: 'Make camp (C)', key: 'c', run: () => openCamp(false), enabled: () => !over },
+  { label: 'Make camp (C)', key: 'c', run: () => openCamp(isSettlement(siteNear(world.pos))), enabled: () => !over },
+  { label: 'Settlement (T)', key: 't', run: () => openSettlement(), enabled: () => !over && isSettlement(siteNear(world.pos)) },
   { label: 'Level up (U)', key: 'u', run: () => offerLevelUps(), enabled: () => !over && pendingCount(world.roster) > 0 },
   { label: 'Inventory (I)', key: 'i', run: () => openWorldInventory(), enabled: () => !over },
   { label: 'Debug overlay (G)', key: 'g', run: () => (worldView.debug = !worldView.debug), enabled: () => true, active: () => worldView.debug },
@@ -1108,6 +1122,49 @@ function noteDiscovery(id: string, name: string): void {
   worldXp(XP_DISCOVERY, `Found ${name}.`);
 }
 
+/** The settlement the party is standing in, if any. */
+function settlementHere(): SettlementState | null {
+  const site = siteNear(world.pos);
+  if (!isSettlement(site) || !site) return null;
+  const st = ensureSettlement(world, site.id);
+  refreshSettlement(world, st);
+  return st;
+}
+
+function openSettlement(): void {
+  if (mode !== 'world' || over) return;
+  const st = settlementHere();
+  if (!st) {
+    worldLog('No settlement here.');
+    return;
+  }
+  showSettlement({
+    world,
+    id: st.id,
+    onChange: (notes) => {
+      for (const n of notes ?? []) worldLog(n);
+      lastWorldSig = '';
+      saveGame(world);
+      updateWorldPanel();
+    },
+    onInventory: () => openWorldInventory(() => openSettlement()),
+    onClose: () => {
+      lastWorldSig = '';
+      saveGame(world);
+      updateWorldPanel();
+      offerLevelUps();
+    },
+  });
+}
+
+/** Push something that happened in the world through every settlement's jobs, and log what it finished. */
+function advanceMissions(apply: (st: SettlementState) => Mission[]): void {
+  for (const st of visitedSettlements(world)) {
+    const place = SETTLEMENTS[st.id]?.name ?? 'the settlement';
+    for (const m of apply(st)) worldLog(`${m.title}: done. Report in at ${place}.`);
+  }
+}
+
 /** Why the run ended, for the log and the game-over panel. */
 const overText = (reason: GameOver): string => {
   const leader = world.roster.find((m) => m.protagonist)?.name ?? 'The leader';
@@ -1138,6 +1195,18 @@ function finishBattle(opts: { leave?: boolean } = {}): void {
     world.scrap += ctx.reward;
     worldLog(`${ctx.label}: victory. +${ctx.reward} scrap.`);
     if (firstClear && ctx.site) pendingSiteXp = XP_SITE_BASE + XP_SITE_PER_DIFFICULTY * (ctx.site.difficulty ?? 1);
+    // whoever posted work about this place, or this patch of the island, now owes you for it
+    advanceMissions((st) => recordWin(st.active, regionAt(world.pos).id));
+    const downed = state.units.filter((u) => u.team === 'enemy' && !u.alive).length;
+    advanceMissions((st) => recordKills(st.active, downed));
+    if (firstClear && ctx.site) {
+      const site = ctx.site;
+      advanceMissions((st) => recordClear(st.active, site.id));
+      for (const st of visitedSettlements(world)) {
+        const grew = addStanding(st, SITE_CLEAR_STANDING * (site.difficulty ?? 1));
+        if (grew.note) worldLog(grew.note);
+      }
+    }
   } else {
     worldLog(`${ctx.label}: defeat.`);
   }
@@ -1247,7 +1316,8 @@ function openCamp(safe: boolean): void {
         );
         return { ambush: true, notes: [] };
       }
-      const notes = morning(world, safe ? 'home' : 'quiet', watch);
+      const here = settlementHere();
+      const notes = morning(world, safe ? 'home' : 'quiet', watch, here ? restBonusOf(here) : 0);
       for (const n of notes) worldLog(n);
       saveGame(world);
       return { ambush: false, notes };
@@ -1273,6 +1343,10 @@ function enterSite(site: Site | null): void {
   if (mode !== 'world' || over) return;
   if (!site) {
     worldLog('There is nothing to enter here.');
+    return;
+  }
+  if (isSettlement(site)) {
+    openSettlement();
     return;
   }
   if (site.kind === 'home') {
@@ -1342,7 +1416,8 @@ function updateWorldPanel(): void {
   const site = siteNear(world.pos);
   const clearable = WORLD.sites.filter((s) => s.difficulty);
   const done = clearable.filter((s) => world.cleared[s.id]).length;
-  const sig = [region.id, site?.id ?? '-', site ? !!world.cleared[site.id] : '', world.scrap, done, rosterSig(world.roster), over ?? '', world.stash?.length ?? 0, world.captives?.length ?? 0].join('|');
+  const sets = Object.values(world.settlements ?? {}).map((st) => `${st.id}:${st.standing}:${st.active.length}:${st.house ?? ''}`).join(',');
+  const sig = [region.id, site?.id ?? '-', site ? !!world.cleared[site.id] : '', world.scrap, done, rosterSig(world.roster), over ?? '', world.stash?.length ?? 0, world.captives?.length ?? 0, sets].join('|');
   if (sig === lastWorldSig) return;
   lastWorldSig = sig;
 
@@ -1367,7 +1442,15 @@ function updateWorldPanel(): void {
   if (site) {
     let status = '';
     if (site.difficulty) status = world.cleared[site.id] ? ' &mdash; cleared' : ` &mdash; hostile (${'!'.repeat(site.difficulty)}), reward ${site.reward ?? 0} scrap`;
-    const hint = site.kind === 'home' ? 'Press E to rest at camp.' : site.difficulty && !world.cleared[site.id] ? 'Press E to assault.' : '';
+    const here = isSettlement(site) ? world.settlements?.[site.id] : null;
+    if (here) status = ` &mdash; ${settlementSummary(here)}`;
+    const hint = isSettlement(site)
+      ? 'Press E for the settlement, C to sleep here.'
+      : site.kind === 'home'
+        ? 'Press E to rest at camp.'
+        : site.difficulty && !world.cleared[site.id]
+          ? 'Press E to assault.'
+          : '';
     lines.push(
       `<div style="margin-top:8px;padding:6px 8px;border-left:3px solid #7ec4e8;background:#1a2530"><b>${site.name}</b>${status}<br>` +
         `<span style="opacity:.8">${site.blurb}</span>${hint ? `<br><span style="color:#e8b04a">${hint}</span>` : ''}</div>`,
